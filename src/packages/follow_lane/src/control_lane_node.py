@@ -27,6 +27,7 @@ class ControlLaneNode:
         self.sub_control = rospy.Subscriber(control_change_topic, Int32, self.cbControl , queue_size = 1)
  
         self.lastError = 0
+        self.integral = 0
         self.v = 0
         self.a = 0
         rospy.on_shutdown(self.fnShutDown)
@@ -49,9 +50,15 @@ class ControlLaneNode:
         print(f'received message. enabled : {self.enable}')
         error = error.data
 
-        #Todo Write own code for PID controller here
-        self.v = 0
-        self.a = 0                
+        #PID-Regler eingefügt
+        self.integral += error
+        p = self.kp * error
+        i = self.ki * self.integral
+        d = self.kd * (error - self.lastError)
+        self.lastError = error
+
+        self.v = self.MAX_VEL
+        self.a = -(p + i + d)
         
 
     def fnShutDown(self):
@@ -63,12 +70,14 @@ class ControlLaneNode:
     def run(self):
         rate = rospy.Rate(10)
         while not rospy.is_shutdown():
-            if self.enable:
+            #if self.enable:
                 twist = Twist2DStamped()
                 twist.header.stamp = rospy.Time.now()
                 
                 twist.v = self.v
                 twist.omega = self.a
+                
+                print(f'publishing {twist}')
                 self.pub_cmd_vel.publish(twist)
 
                 rate.sleep()

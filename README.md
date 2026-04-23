@@ -13,13 +13,14 @@ git remote set-url <your-github-repository-url>
 
 ## Launch Ros nodes
 
+### Jedes mal in neuem Terminal
 ```
 source /opt/ros/noetic/setup.bash    
-export ROS_MASTER_URI=http://tick.local:11311
-export ROS_IP=192.168.137.66
-export VEHICLE_NAME=tick
+export ROS_MASTER_URI=http://gundel.local:11311
+export ROS_IP=192.168.137.146
+export VEHICLE_NAME=gundel
 ```
-
+### Jedes mal wenn ich Code Veränderungen habe/ wenn ich neues Terminal öffne 
 Build the project
 ```
 catkin_make 
@@ -39,3 +40,22 @@ launchers/follow_lane.sh
 ## code structure
 This reposistory is formed as a catkin workspace. The code is seprated in packages. The actual code for the DuckieRace challenge is in src/package/follow_lane/src. The package duckietown_msgs contains message definitions for the communication with the nodes running on the duckiebot. 
 
+# Additional Infos
+
+## Setup 
+
+IP-Adresse von Laptop ändern **VON VM AUS**:
+```
+hostname -I
+```
+export ROS_IP= *hier IP-Adresse einfügen*
+
+
+
+## Infos bekommen:
+
+rosrun follow_lane configuration_node.py 
+
+
+
+## Allgemeines

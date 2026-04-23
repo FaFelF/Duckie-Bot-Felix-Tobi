@@ -169,7 +169,7 @@ class DetectLaneNode:
         image = cv2.circle(image, (int(center_yellow), int(len(img) * 0.75)), 5,(0,255,255))
 
 
-        
+        #auskommentieren, wenn über vs code
         cv2.imshow('lane detection', image)
         self.is_running = False
         
