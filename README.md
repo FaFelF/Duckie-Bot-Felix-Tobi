@@ -16,9 +16,9 @@ git remote set-url <your-github-repository-url>
 ### Jedes mal in neuem Terminal
 ```
 source /opt/ros/noetic/setup.bash    
-export ROS_MASTER_URI=http://gundel.local:11311
-export ROS_IP=192.168.137.146
-export VEHICLE_NAME=gundel
+export ROS_MASTER_URI=http://donald.local:11311
+export ROS_IP=192.168.90.145 
+export VEHICLE_NAME=donald
 ```
 ### Jedes mal wenn ich Code Veränderungen habe/ wenn ich neues Terminal öffne 
 Build the project
