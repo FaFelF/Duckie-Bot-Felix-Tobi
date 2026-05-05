@@ -62,7 +62,7 @@ class ControlLaneNode:
         self.integral = max(-1.0, min(1.0, self.integral))  # ← Clamp
         p = self.kp * error
         i = self.ki * self.integral
-        d = self.kd * ((error - self.lastError)/0.1)
+        d = self.kd * ((error - self.lastError)/0.1) #soll wert gewichtung des D-Teils erhöhen, da die Funktion 10 mal pro Sekunde aufgerufen wird
         self.lastError = error
 
         self.v = self.MAX_VEL * max(0.3, 1 - abs(error))
