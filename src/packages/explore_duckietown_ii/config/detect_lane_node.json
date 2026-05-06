@@ -2,11 +2,12 @@
 "debug_image_topics":[
     "/debug/lane_croped",
     "/debug/lane_white",
-    "/debug/lane_yellow"
+    "/debug/lane_yellow",
+    "/debug/full_view"
 ],
 
 "parameters":{
-    "crop_image":{
+     "crop_image":{
         "bottom_left_x": {"default":606,"min" : -100, "max": 1000},
         "bottom_left_y": {"default":382,"min" : -100, "max": 1000},
         "bottom_right_x": {"default":-29,"min" : -100, "max": 1000},
@@ -25,6 +26,9 @@
     "vh": {"default": 255, "min": 0, "max": 255},
     "vl": {"default": 120, "min": 0, "max": 255}
     },
+
+    "detection_row_factor": {"default": 0.75, "min": 0.5, "max": 0.95},
+    "min_lane_width": {"default": 80, "min": 0, "max": 300},
 
     "white":{
     "hh": {"default": 255, "min": 0, "max": 255},

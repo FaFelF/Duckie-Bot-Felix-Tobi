@@ -4,7 +4,7 @@ import os
 import rospy
 import numpy as np
 import cv2
-from std_msgs.msg import Float64, String, Bool
+from std_msgs.msg import Float64, String, Bool, Int32
 from sensor_msgs.msg import CompressedImage
 import util
 
@@ -30,6 +30,7 @@ class DetectIntersectionNode:
         self.counter = 0
 
         self.pub_debug_red = rospy.Publisher(f'/{self._vehicle_name}/debug/lane_red', CompressedImage, queue_size=1)
+        self.pub_red_count = rospy.Publisher(f'/{self._vehicle_name}/debug/red_pixel_count', Int32, queue_size=1)
         self.pub_debug_raw = rospy.Publisher(f'/{self._vehicle_name}/debug/raw', CompressedImage, queue_size=1)
         self.debug_img = None
         self.raw_img = None
@@ -150,7 +151,8 @@ class DetectIntersectionNode:
         """
         # Nur das untere Drittel des Bildes analysieren, roter Streifen liegt auf dem Boden direkt vor dem Bot
         height = image.shape[0]
-        roi = image[int(height * 0.66):, :]
+        width  = image.shape[1]
+        roi = image[int(height * 0.66):, int(width * 0.3):]
         # crop_img wird hier nicht benötigt, ROI-Slice reicht für die Farberkennung
         #img = self.crop_img(roi)
 
@@ -177,7 +179,8 @@ class DetectIntersectionNode:
         cv2.putText(self.debug_img, f"Red pixels: {num_red_pixels}", (10, 30),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
 
-        # Schwellwert wird aus der Konfigurationsdatei geladen und kann dort angepasst werden
+        self.pub_red_count.publish(Int32(data=num_red_pixels))
+
         if num_red_pixels > self.thresh_red_pixels:
             return True
 

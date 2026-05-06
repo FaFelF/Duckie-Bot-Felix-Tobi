@@ -19,6 +19,8 @@ class ControlLaneNode:
 
         twist_topic = f"/{self._vehicle_name}/car_cmd_switch_node/cmd"
         self.pub_cmd_vel = rospy.Publisher(twist_topic, Twist2DStamped, queue_size = 1)
+        self.pub_debug_v     = rospy.Publisher(f'/{self._vehicle_name}/debug/control_v',     Float64, queue_size=1)
+        self.pub_debug_omega = rospy.Publisher(f'/{self._vehicle_name}/debug/control_omega', Float64, queue_size=1)
 
         detect_lane_topic = f"/{self._vehicle_name}/detect/lane"
         self.sub_lane = rospy.Subscriber(detect_lane_topic, Float64, self.cbFollowLane, queue_size = 1)
@@ -51,6 +53,7 @@ class ControlLaneNode:
         self.ki = parameters["pid"]["i"]["default"]
         self.kd = parameters["pid"]["d"]["default"]
         self.MAX_VEL = parameters["pid"]["max_vel"]["default"]
+        self.speed_curve_factor = parameters["pid"]["speed_curve_factor"]["default"]
 
     # error between 1 and -1
     def cbFollowLane(self, error):
@@ -65,7 +68,7 @@ class ControlLaneNode:
         d = self.kd * ((error - self.lastError)/0.1) #soll wert gewichtung des D-Teils erhöhen, da die Funktion 10 mal pro Sekunde aufgerufen wird
         self.lastError = error
 
-        self.v = self.MAX_VEL * max(0.3, 1 - abs(error))
+        self.v = self.MAX_VEL * max(0.5, 1 - abs(error) * self.speed_curve_factor)
         self.a = p + i + d
         
     
@@ -91,6 +94,8 @@ class ControlLaneNode:
 
             print(f'publishing {twist}')
             self.pub_cmd_vel.publish(twist)
+            self.pub_debug_v.publish(Float64(data=twist.v))
+            self.pub_debug_omega.publish(Float64(data=twist.omega))
 
             rate.sleep()
 
