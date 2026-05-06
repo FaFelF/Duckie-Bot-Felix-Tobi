@@ -2,8 +2,7 @@
 "debug_image_topics":[
     "/debug/lane_croped",
     "/debug/lane_white",
-    "/debug/lane_yellow",
-    "/debug/full_view"
+    "/debug/lane_yellow"
 ],
 
 "parameters":{

@@ -58,7 +58,7 @@ class SwitchControlNode:
             if self.is_intersection_free:
                 #Kreuzung als frei markieren und zurück zum Lane-Modus wechseln
                 self._control_mode = ControlType.Lane
-                rospy.sleep(5)
+                rospy.sleep(10)
 
     def run(self):
         rate = rospy.Rate(10)
