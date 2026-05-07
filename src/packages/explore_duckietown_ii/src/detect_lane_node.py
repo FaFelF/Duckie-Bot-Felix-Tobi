@@ -155,25 +155,24 @@ class DetectLaneNode:
             white_alternative = int(len(img[0]) * 0.95)
             yellow_alternative = int(len(img[0]) * 0.05)
 
-            # Erst gelb finden
-            center_yellow = self.get_x_for_driving(mask_yellow, int(len(img)*detection_row_factor), yellow_alternative, left_line=True)
+            # Gelb fix am konfigurierten detection_row_factor
+            yellow_row_factor = self.detection_row_factor
+            center_yellow = self.get_x_for_driving(mask_yellow, int(len(img)*yellow_row_factor), yellow_alternative, left_line=True)
 
             # Weiße Maske: alles links von gelb + min_lane_width ausblenden
             mask_white_filtered = mask_white.copy()
             corridor_start = max(0, int(center_yellow) + self.min_lane_width)
             mask_white_filtered[:, :corridor_start] = 0
 
+            # Weiß sucht weiter unten falls nicht gefunden
             center_white = self.get_x_for_driving(mask_white_filtered, int(len(img)*detection_row_factor), white_alternative, left_line=False)
 
             while center_white == white_alternative and detection_row_factor <= 0.95:
                 detection_row_factor += 0.05
-                center_yellow = self.get_x_for_driving(mask_yellow, int(len(img)*detection_row_factor), yellow_alternative, left_line=True)
-                corridor_start = max(0, int(center_yellow) + self.min_lane_width)
-                mask_white_filtered[:, :corridor_start] = 0
                 center_white = self.get_x_for_driving(mask_white_filtered, int(len(img)*detection_row_factor), white_alternative, left_line=False)
 
             self.used_detection_row_white  = int(len(img) * detection_row_factor)
-            self.used_detection_row_yellow = int(len(img) * detection_row_factor)
+            self.used_detection_row_yellow = int(len(img) * yellow_row_factor)
             self.used_detection_row = self.used_detection_row_white
 
             if center_white <= center_yellow:
