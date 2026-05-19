@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 
 import rospy
-from std_msgs.msg import Float64, Int32, String
+from std_msgs.msg import Float64, Int32, String, Bool
 
 from duckietown_msgs.msg import Twist2DStamped
 import os
-from switch_control_node import ControlType
+from switch_control_node import ControlType, IntersectionsDirections
 import yaml
 import util
 
 class ControlLaneNode:
     def __init__(self,node_name):
         rospy.init_node(node_name)
-        self.enable = True
+        self._control_mode = ControlType.Lane
 
         self._vehicle_name = os.environ['VEHICLE_NAME']
         util.init_parameters(node_name, self.cbUpdateParameters)
@@ -27,7 +27,11 @@ class ControlLaneNode:
 
         control_change_topic = f"/{self._vehicle_name}/switch/control"
         self.sub_control = rospy.Subscriber(control_change_topic, Int32, self.cbControl , queue_size = 1)
- 
+
+        intersection_direction_topic = f"/{self._vehicle_name}/switch/intersection_direction"
+        self.sub_intersection_direction = rospy.Subscriber(intersection_direction_topic, Int32, self.cbIntersectionControl, queue_size = 1)
+
+        self.pub_intersection_finished = rospy.Publisher(f'/{self._vehicle_name}/switch/intersection_finished', Bool, queue_size=1)
 
         self.lastError = 0
         self.integral = 0
@@ -42,11 +46,9 @@ class ControlLaneNode:
         rospy.on_shutdown(self.fnShutDown)
 
     def cbControl(self,msg):
-        if msg.data == ControlType.Lane.value:
-            self.enable = True
+        self._control_mode = msg.data
         
-        else:
-            self.enable = False
+
 
     def cbUpdateParameters(self,parameters):
         self.kp = parameters["pid"]["p"]["default"]
@@ -57,7 +59,10 @@ class ControlLaneNode:
 
     # error between 1 and -1
     def cbFollowLane(self, error):
-        print(f'received message. enabled : {self.enable}')
+        if self._control_mode != ControlType.Lane:
+            return
+        
+        print(f'received message. enabled : {self._control_mode == ControlType.Lane}')
         error = error.data
 
         #PID-Regler eingefügt
@@ -71,7 +76,28 @@ class ControlLaneNode:
         self.v = self.MAX_VEL * max(0.5, 1 - abs(error) * self.speed_curve_factor)
         self.a = p + i + d
         
-    
+    def cbIntersectionControl(self, msg):
+        if self._control_mode != ControlType.Intersection:
+            return
+
+        self.intersection_direction = IntersectionsDirections(msg.data)
+        if self.intersection_direction == IntersectionsDirections.Left:
+            print('Intersection direction: Left')
+        elif self.intersection_direction == IntersectionsDirections.Straight:
+            print('Intersection direction: Straight')
+        elif self.intersection_direction == IntersectionsDirections.Right:
+            print('Intersection direction: Right')      
+        #Hier Logik fürs abbiegen einfügen
+
+
+        self.pub_intersection_finished.publish(Bool(data=True))
+
+    def cbAvoidDuckie(self, msg):
+        if self._control_mode != ControlType.Obstacle:
+            return
+
+
+
 
     def fnShutDown(self):
         rospy.loginfo("Shutting down. cmd_vel will be 0")
@@ -84,7 +110,7 @@ class ControlLaneNode:
         while not rospy.is_shutdown():
             twist = Twist2DStamped()
             twist.header.stamp = rospy.Time.now()
-            if self.enable:
+            if self._control_mode == ControlType.Stop:
 
                 twist.v = self.v
                 twist.omega = self.a

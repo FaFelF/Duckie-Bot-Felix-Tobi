@@ -1,7 +1,9 @@
+#!/usr/bin/env python3
 import os
 import rospy
 import numpy as np
 import cv2
+from duckietown_msgs.msg import AprilTagDetection, AprilTagDetectionArray
 from std_msgs.msg import Int32
 from sensor_msgs.msg import CompressedImage
 from pupil_apriltags import Detector
@@ -14,6 +16,7 @@ class DetectAprilTagNode:
         rospy.init_node(node_name)
 
         self._vehicle_name = os.environ['VEHICLE_NAME']
+        self._detector = None
         util.init_parameters(node_name, self.cbUpdateParameters)
 
         self._camera_topic = f"/{self._vehicle_name}/camera_node/image/compressed"
@@ -25,9 +28,8 @@ class DetectAprilTagNode:
 
         self.is_running = False
         self.counter = 0
-        self._detector = None
 
-        self.pub_debug_location_apriltag = rospy.Publisher(f'/{self._vehicle_name}/debug/apriltag_location', CompressedImage, queue_size=1)
+        self.pub_debug_locations_apriltag = rospy.Publisher(f'/{self._vehicle_name}/debug/apriltag_locations', AprilTagDetectionArray, queue_size=1)
 
     def cbUpdateParameters(self, parameters):
         """
@@ -67,35 +69,44 @@ class DetectAprilTagNode:
         Args:
             msg (CompressedImage): Das empfangene Bild im komprimierten Format
         """
-        if self._detector is None:
-            return
+        try:
+            if self._detector is None:
+                rospy.logwarn("detector is None")
+                return
 
-        image = util.compressed_img_to_cv2(msg)
-        width  = image.shape[1]
-        roi = image[:, int(width * self.roi_width):]
+            np_arr = np.frombuffer(msg.data, np.uint8)
+            image = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+            width = image.shape[1]
+            roi = image[:, int(width * self.roi_width):]
 
-        gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+            gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
 
-        tags = self._detector.detect(gray, estimate_tag_pose=False)
+            tags = self._detector.detect(gray, estimate_tag_pose=False)
 
-        if tags:
-            self.pub_apriltag.publish(tags[0].tag_id)
-            apriltag_location = tags[0].corners.astype(int)
-            corners = apriltag_location + [int(width * self.roi_width), 0]
+            rospy.loginfo_throttle(2, f"AprilTag detect: {len(tags)} tags found")
 
-            if self.pub_debug_location_apriltag.get_num_connections() > 0:
-                debug_img = image.copy()
-                cv2.polylines(debug_img, [corners], isClosed=True, color=(0, 255, 0), thickness=2)
-                text_pos = (corners[:, 0].min(), corners[:, 1].max() + 20)
-                cv2.putText(debug_img, str(tags[0].tag_id), text_pos, cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+            if tags:
+                tag_detections = AprilTagDetectionArray()
 
-                debug_msg = CompressedImage()
-                debug_msg.header.stamp = rospy.Time.now()
-                debug_msg.format = "jpeg"
-                debug_msg.data = np.array(cv2.imencode('.jpg', debug_img)[1]).tobytes()
-                self.pub_debug_location_apriltag.publish(debug_msg)
-        else:
-            self.pub_apriltag.publish(-1)
+                for tag in tags:
+                    detection = AprilTagDetection()
+                    corners_offset = tag.corners.astype(float) + [int(width * self.roi_width), 0]
+                    detection.corners = corners_offset.flatten().tolist()
+                    detection.center = [corners_offset[:, 0].min(), corners_offset[:, 1].max() + 20]
+                    detection.tag_id = tag.tag_id
+                    tag_detections.detections.append(detection)
+
+                largest = max(tags, key=lambda t: (t.corners[:,0].max() - t.corners[:,0].min()) *
+                                                   (t.corners[:,1].max() - t.corners[:,1].min()))
+                self.pub_apriltag.publish(largest.tag_id)
+
+                if self.pub_debug_locations_apriltag.get_num_connections() > 0:
+                    self.pub_debug_locations_apriltag.publish(tag_detections)
+            else:
+                self.pub_apriltag.publish(-1)
+
+        except Exception as e:
+            rospy.logerr(f"cbFindAprilTag error: {e}")
 
 
 if __name__ == '__main__':
