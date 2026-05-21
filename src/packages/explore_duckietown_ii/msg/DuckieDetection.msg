@@ -1,0 +1,2 @@
+duckietown_msgs/Rect bounding_box
+float32 circularity

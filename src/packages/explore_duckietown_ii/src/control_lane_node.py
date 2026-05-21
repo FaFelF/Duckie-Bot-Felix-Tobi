@@ -46,7 +46,7 @@ class ControlLaneNode:
         rospy.on_shutdown(self.fnShutDown)
 
     def cbControl(self,msg):
-        self._control_mode = msg.data
+        self._control_mode = ControlType(msg.data)
         
 
 
@@ -110,10 +110,11 @@ class ControlLaneNode:
         while not rospy.is_shutdown():
             twist = Twist2DStamped()
             twist.header.stamp = rospy.Time.now()
-            if self._control_mode == ControlType.Stop:
-
-                twist.v = self.v
-                twist.omega = self.a
+            if self._control_mode != ControlType.Stop:
+                # twist.v = self.v
+                # twist.omega = self.a
+                twist.v = 0.0
+                twist.omega = 0.0
             else:
                 twist.v = 0.0
                 twist.omega = 0.0
