@@ -1,0 +1,31 @@
+{
+    "name": "DuckieRace Dev Environment",
+    "build": {
+        "dockerfile": "Dockerfile"
+    },
+    "runArgs": [
+        "--net=host",
+        "--privileged",
+        "-v", "/tmp/.X11-unix:/tmp/.X11-unix",
+        "-v", "/var/run/dbus:/var/run/dbus",
+        "-v", "/var/run/avahi-daemon/socket:/var/run/avahi-daemon/socket"
+    ],
+    "mounts": [
+    "source=${localEnv:HOME}/.claude,target=/root/.claude,type=bind"
+    ],
+    "containerUser": "root",
+    "remoteUser": "root",
+    "workspaceMount": "source=${localWorkspaceFolder},target=/root/DuckieRace,type=bind",
+    "workspaceFolder": "/root/DuckieRace",
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-iot.vscode-ros",
+                "ms-python.python",
+                "ms-vscode.cpptools"
+            ]
+        }
+    },
+    "postCreateCommand": "rosdep update && rosdep install --from-paths src --ignore-src -r -y && catkin_make",
+    "shutdownAction": "stopContainer"
+}
