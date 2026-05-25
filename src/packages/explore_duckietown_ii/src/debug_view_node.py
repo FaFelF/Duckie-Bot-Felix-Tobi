@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 
+from curses import raw
 import os
 import rospy
 import numpy as np
 import cv2
 from std_msgs.msg import Float64, Int32
+from duckietown_msgs.msg import AprilTagDetection, AprilTagDetectionArray
+from duckietown_msgs.msg import Rect
+from explore_duckietown_ii.msg import DuckieDetection, DuckieDetectionArray
 from sensor_msgs.msg import CompressedImage
 import util
 
@@ -26,6 +30,8 @@ class DebugViewNode:
         self.lane_error         = 0.0
         self.red_pixel_count    = 0
         self.control_v          = 0.0
+        self.apriltag_locations   = []
+        self.duckie_detections    = []
 
         v = self._vehicle_name
         rospy.Subscriber(f'/{v}/camera_node/image/compressed', CompressedImage, self.cbImage,        queue_size=1)
@@ -36,6 +42,9 @@ class DebugViewNode:
         rospy.Subscriber(f'/{v}/detect/lane',                  Float64,         self.cbLaneError,    queue_size=1)
         rospy.Subscriber(f'/{v}/debug/red_pixel_count',        Int32,           self.cbRedCount,     queue_size=1)
         rospy.Subscriber(f'/{v}/debug/control_v',              Float64,         self.cbControlV,     queue_size=1)
+
+        rospy.Subscriber(f'/{v}/debug/duckie_detection',       DuckieDetectionArray, self.cbDuckieDetection, queue_size=1)
+        rospy.Subscriber(f'/{v}/debug/apriltag_locations',      AprilTagDetectionArray, self.cbapriltagInfo,   queue_size=1)
 
         self.pub_full = rospy.Publisher(f'/{v}/debug/full_view', CompressedImage, queue_size=1)
 
@@ -75,6 +84,9 @@ class DebugViewNode:
     def cbRedCount(self,     msg): self.red_pixel_count     = msg.data
     def cbControlV(self,     msg): self.control_v           = msg.data
 
+    def cbapriltagInfo(self,   msg): self.apriltag_locations   = msg.detections
+    def cbDuckieDetection(self, msg): self.duckie_detections    = msg.detections
+
     def build_full_debug_img(self):
         if self.raw_img is None or self.M is None:
             return None
@@ -105,9 +117,22 @@ class DebugViewNode:
             if 0 <= dy <= self._crop_im_size:
                 cv2.line(raw, proj(0, dy), proj(self._crop_im_size, dy), (180, 180, 180), 1)
 
+        for apriltag_location in self.apriltag_locations:
+            corners = apriltag_location.corners
+            corners = np.array(corners).reshape((4, 2)).astype(int)
+            cv2.rectangle(raw, tuple(corners[0]), tuple(corners[2]), (0, 255, 0), 2)
+            cv2.putText(raw, str(apriltag_location.tag_id), (int(apriltag_location.center[0]), int(apriltag_location.center[1])), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+
+        for duckie in self.duckie_detections:
+            cv2.rectangle(raw, (duckie.bounding_box.x, duckie.bounding_box.y), (duckie.bounding_box.x + duckie.bounding_box.w, duckie.bounding_box.y + duckie.bounding_box.h), (0, 255, 255), 2)
+            cv2.putText(raw, f"Circ: {duckie.circularity:.2f}", (duckie.bounding_box.x, duckie.bounding_box.y + duckie.bounding_box.h - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+
         cv2.circle(raw, proj(int(self.center_white),  det_row), 6, (255, 255, 255), -1)
         cv2.circle(raw, proj(int(self.center_yellow), det_row), 6, (0, 255, 255),   -1)
         cv2.circle(raw, proj(int(self.lane_center), self._crop_im_size // 2), 5, (255, 0, 0), -1)
+
+        
+        
 
         panel_w = 250
         panel = np.zeros((raw_h, panel_w, 3), dtype=np.uint8)
@@ -119,6 +144,12 @@ class DebugViewNode:
         cv2.putText(panel, f"{det_row}px",        (10, 255), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 0), 2)
         cv2.putText(panel, "Speed (v):",          (10, 310), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
         cv2.putText(panel, f"{self.control_v:.3f} m/s", (10, 345), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 200, 255), 2)
+        cv2.putText(panel, "AprilTags:",            (10, 400), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
+        cv2.putText(panel, f"{len(self.apriltag_locations)}", (10, 435), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 255), 2)
+        cv2.putText(panel, "Duckies:",          (10, 455), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
+        cv2.putText(panel, f"{len(self.duckie_detections)}", (10, 475), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+
+        
 
         return np.hstack([raw, panel])
 
