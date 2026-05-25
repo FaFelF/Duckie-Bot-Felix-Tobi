@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y \
     git \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip3 install transitions
+RUN pip3 install transitions onnxruntime-gpu opencv-python-headless "numpy>=1.21.6"
 
 # Fix für mDNS: Erlaubt dem Container, .local Namen aufzulösen
 RUN sed -i 's/hosts: files dns/hosts: files mdns4_minimal [NOTFOUND=return] dns mdns4/' /etc/nsswitch.conf

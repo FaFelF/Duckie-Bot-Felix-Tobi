@@ -73,13 +73,15 @@ class ConfigurationNode:
         for group in groups:
             menu.add_command(label=group, command=lambda value=group: self.select_group(value))
 
+        image_topics = ['/debug/full_view'] + util.get_image_topics(self.selected_node.get())
         image_menu = self.image_dropown['menu']
         image_menu.delete(0, 'end')
-        for topic in util.get_image_topics(self.selected_node.get()):
+        for topic in image_topics:
             image_menu.add_command(label=topic, command=lambda value=topic: self.select_image_topic(value))
 
         self.select_group(groups[0] if groups else '')
         self.rebuild_sliders()
+        self.select_image_topic('/debug/full_view')
 
     def rebuild_sliders(self):
         for widget in self.slider_frame.winfo_children():
