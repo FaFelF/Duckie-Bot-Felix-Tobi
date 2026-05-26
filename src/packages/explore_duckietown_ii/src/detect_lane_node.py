@@ -243,10 +243,19 @@ class DetectLaneNode:
                 debug_img = cv2.circle(debug_img, (int(self.center_white),  self.used_detection_row_white),  5,(255,255,255))
                 debug_img = cv2.circle(debug_img, (int(self.center_yellow), self.used_detection_row_yellow), 5,(0,255,255))
 
+                h, w = debug_img.shape[:2]
+                mask_panel = np.zeros((h, w, 3), dtype=np.uint8)
+                white_mask = cv2.resize(self.debug_img_white, (w, h))
+                yellow_mask = cv2.resize(self.debug_img_yellow, (w, h))
+                mask_panel[white_mask > 0]  = (255, 255, 255)
+                mask_panel[yellow_mask > 0] = (0, 255, 255)
+
+                combined = np.hstack([debug_img, mask_panel])
+
                 debug_msg = CompressedImage()
                 debug_msg.header.stamp = rospy.Time.now()
                 debug_msg.format = "jpeg"
-                debug_msg.data = np.array(cv2.imencode('.jpg', debug_img)[1]).tobytes()
+                debug_msg.data = np.array(cv2.imencode('.jpg', combined)[1]).tobytes()
                 self.pub_debug_lane.publish(debug_msg)
 
             if self.pub_debug_white.get_num_connections() > 0:

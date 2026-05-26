@@ -2,12 +2,13 @@
 
 import json
 import os
+import signal
 import tkinter as tk
-import cv2
 import rospy
 import util
-from std_msgs.msg import String
+import cv2
 import numpy as np
+from std_msgs.msg import String
 from sensor_msgs.msg import CompressedImage
 
 class ConfigurationNode:
@@ -21,7 +22,7 @@ class ConfigurationNode:
         self.publisher = rospy.Publisher(self.update_topic, String, queue_size=1)
 
         self.image_subscriber = None
-        self.image = None
+        self.current_image = None
 
         self.available_nodes = []
         for file_name in sorted(os.listdir(self.config_dir)):
@@ -50,6 +51,7 @@ class ConfigurationNode:
         self.slider_frame = tk.Frame(self.root)
         self.slider_frame.pack(fill='both', expand=True, padx=10, pady=10)
         self.change_node(self.selected_node.get())
+        self.root.after(100, self._refresh_debug_image)
 
     def select_group(self, group_name):
         self.selected_group.set(group_name)
@@ -105,9 +107,13 @@ class ConfigurationNode:
    
     def update_image(self, msg):
         np_arr = np.frombuffer(msg.data, np.uint8)
-        cv_image = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
-        cv2.imshow('Debug Image', cv_image)
-        cv2.waitKey(1)
+        self.current_image = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+
+    def _refresh_debug_image(self):
+        if self.current_image is not None:
+            cv2.imshow('Debug Image', self.current_image)
+            cv2.waitKey(1)
+        self.root.after(100, self._refresh_debug_image)
 
     def update_parameter(self, param, value):
         is_float = isinstance(self.parameters[self.selected_group.get()][param]['min'], float)
@@ -123,12 +129,13 @@ class ConfigurationNode:
     def shutdown(self):
         if self.image_subscriber:
             self.image_subscriber.unregister()
-        cv2.destroyAllWindows()
         self.root.destroy()
         #rospy.signal_shutdown('User ended program')
 
 
 if __name__ == '__main__':
     node = ConfigurationNode('configuration_node')
+    signal.signal(signal.SIGINT,  lambda s, f: node.root.quit())
+    signal.signal(signal.SIGTERM, lambda s, f: node.root.quit())
     node.run()
     #rospy.spin()

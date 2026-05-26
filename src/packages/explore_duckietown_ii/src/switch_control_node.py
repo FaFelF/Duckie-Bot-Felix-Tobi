@@ -26,7 +26,7 @@ class SwitchControlNode:
         
 
         self._vehicle_name = os.environ['VEHICLE_NAME']
-        self.sub_duckie = rospy.Subscriber(f"/{self._vehicle_name}/detect/duckies", Bool, self.cbDuckieDetected, queue_size = 1)
+        self.sub_duckie = rospy.Subscriber(f"/{self._vehicle_name}/detect/duckie_control_active", Bool, self.cbDuckieDetected, queue_size = 1)
         self.sub_lane = rospy.Subscriber(f"/{self._vehicle_name}/detect/lane", Float64, self.cbLaneDetected, queue_size = 1)
         self.pub_control = rospy.Publisher(f"/{self._vehicle_name}/switch/control", Int32, queue_size = 1)
 
@@ -34,8 +34,8 @@ class SwitchControlNode:
 
         self.sub_intersection = rospy.Subscriber(f'/{self._vehicle_name}/detect/intersection', Bool, self.cbIntersection, queue_size=1)
 
-        self.current_apriltag_id = -1
-        self.sub_Apriltag = rospy.Subscriber(f'/{self._vehicle_name}/detect/apriltag', Int32, self.cbApriltag, queue_size=1)
+        self._chosen_direction = IntersectionsDirections.Straight
+        self.sub_saved_apriltag = rospy.Subscriber(f'/{self._vehicle_name}/detect/saved_apriltag', Int32, self.cbChooseDirection, queue_size=1)
 
         self.intersection_finished = False
         self.sub_intersection_finished = rospy.Subscriber(f'/{self._vehicle_name}/switch/intersection_finished', Bool, self.cbIntersectionFinished, queue_size=1)
@@ -44,12 +44,13 @@ class SwitchControlNode:
 
         self._control_mode = ControlType.Lane
 
+        self.intersection_running = False
+        self._intersection_cooldown_start = None
+        self.intersection_cooldown_time = 7  # seconds
         self.is_intersection_free = True
         self._waiting_on_intersection = False
         self._state_start_time = None
         self.intersection_wait_time = 3  # seconds
-
-        self._chosen_direction = IntersectionsDirections.Straight
 
 
 
@@ -71,7 +72,7 @@ class SwitchControlNode:
     def cbIntersectionFinished(self, msg):
         self.intersection_finished = msg.data
         if self.intersection_finished:
-            self._control_mode = ControlType.Lane   
+            self._control_mode = ControlType.Lane
             self.intersection_finished = False
 
     def cbIntersection(self, msg):
@@ -84,46 +85,42 @@ class SwitchControlNode:
         Args:
             msg (Bool): True wenn roter Streifen erkannt, sonst False
         """
+        if self.intersection_running:
+            return
 
-        if msg.data == True and self._control_mode == ControlType.Lane:
-            
-            self._chosen_direction = self.fnChooseDirection()
-
+        if msg.data and self._control_mode == ControlType.Lane:
+            self.intersection_running = True
+            self._intersection_cooldown_start = rospy.Time.now()
             self._control_mode = ControlType.Stop
             rospy.loginfo(f"Intersection detected! Waiting for {self.intersection_wait_time} seconds...")
             self._state_start_time = rospy.Time.now()
             self._waiting_on_intersection = True
+            self.pub_chosen_direction.publish(self._chosen_direction.value)
 
 
-    def fnChooseDirection(self):
-        tag_id = self.current_apriltag_id
-        chosen_direction= IntersectionsDirections.Straight
-        if tag_id == 0:       #┼
-            chosen_direction = IntersectionsDirections(random.randint(0, 2))
-            
-        elif tag_id == 1:     #┤
-            chosen_direction = IntersectionsDirections(random.randint(0, 1))
-            
-        elif tag_id == 2:     #├
-            chosen_direction = IntersectionsDirections(random.randint(1, 2))
-            
-        elif tag_id == 3:     #┴
-            chosen_direction = IntersectionsDirections(random.choice([0, 2]))
-
-        return chosen_direction
-
-    def cbApriltag(self, msg):
-        self.current_apriltag_id = msg.data
+    def cbChooseDirection(self, msg):
+        tag_id = msg.data
+        if tag_id == 1:       #┼
+            self._chosen_direction = IntersectionsDirections(random.randint(0, 2))
+        elif tag_id == 3:     #┤
+            self._chosen_direction = IntersectionsDirections(random.randint(0, 1))
+        elif tag_id == 4:     #├
+            self._chosen_direction = IntersectionsDirections(random.randint(1, 2))
+        elif tag_id == 2:     #┴
+            self._chosen_direction = IntersectionsDirections(random.choice([0, 2]))
 
     def run(self):
         rate = rospy.Rate(10)
         while not rospy.is_shutdown():
 
+            if self.intersection_running and self._intersection_cooldown_start is not None:
+                if (rospy.Time.now() - self._intersection_cooldown_start).to_sec() >= self.intersection_cooldown_time:
+                    self.intersection_running = False
+
             if self._waiting_on_intersection:
                 if (rospy.Time.now() - self._state_start_time).to_sec() >= self.intersection_wait_time:
                     self._waiting_on_intersection = False
                     self._control_mode = ControlType.Intersection
-                    self.pub_chosen_direction.publish(self._chosen_direction.value)
 
             self.pub_control.publish(self._control_mode.value)
             rate.sleep()

@@ -30,21 +30,26 @@ class DebugViewNode:
         self.lane_error         = 0.0
         self.red_pixel_count    = 0
         self.control_v          = 0.0
-        self.apriltag_locations   = []
-        self.duckie_detections    = []
+        self.apriltag_locations = []
+        self.duckie_detections  = []
+        self.control_mode       = -1
+        self.saved_apriltag     = -1
+        self.intersection_dir   = -1
 
         v = self._vehicle_name
-        rospy.Subscriber(f'/{v}/camera_node/image/compressed', CompressedImage, self.cbImage,        queue_size=1)
-        rospy.Subscriber(f'/{v}/debug/det_center_white',       Float64,         self.cbCenterWhite,  queue_size=1)
-        rospy.Subscriber(f'/{v}/debug/det_center_yellow',      Float64,         self.cbCenterYellow, queue_size=1)
-        rospy.Subscriber(f'/{v}/debug/det_lane_center',        Float64,         self.cbLaneCenter,   queue_size=1)
-        rospy.Subscriber(f'/{v}/debug/det_row',                Int32,           self.cbDetRow,       queue_size=1)
-        rospy.Subscriber(f'/{v}/detect/lane',                  Float64,         self.cbLaneError,    queue_size=1)
-        rospy.Subscriber(f'/{v}/debug/red_pixel_count',        Int32,           self.cbRedCount,     queue_size=1)
-        rospy.Subscriber(f'/{v}/debug/control_v',              Float64,         self.cbControlV,     queue_size=1)
-
-        rospy.Subscriber(f'/{v}/debug/duckie_detection',       DuckieDetectionArray, self.cbDuckieDetection, queue_size=1)
-        rospy.Subscriber(f'/{v}/debug/apriltag_locations',      AprilTagDetectionArray, self.cbapriltagInfo,   queue_size=1)
+        rospy.Subscriber(f'/{v}/camera_node/image/compressed', CompressedImage,       self.cbImage,             queue_size=1)
+        rospy.Subscriber(f'/{v}/debug/det_center_white',       Float64,               self.cbCenterWhite,       queue_size=1)
+        rospy.Subscriber(f'/{v}/debug/det_center_yellow',      Float64,               self.cbCenterYellow,      queue_size=1)
+        rospy.Subscriber(f'/{v}/debug/det_lane_center',        Float64,               self.cbLaneCenter,        queue_size=1)
+        rospy.Subscriber(f'/{v}/debug/det_row',                Int32,                 self.cbDetRow,            queue_size=1)
+        rospy.Subscriber(f'/{v}/detect/lane',                  Float64,               self.cbLaneError,         queue_size=1)
+        rospy.Subscriber(f'/{v}/debug/red_pixel_count',        Int32,                 self.cbRedCount,          queue_size=1)
+        rospy.Subscriber(f'/{v}/debug/control_v',              Float64,               self.cbControlV,          queue_size=1)
+        rospy.Subscriber(f'/{v}/debug/duckie_detection',       DuckieDetectionArray,  self.cbDuckieDetection,   queue_size=1)
+        rospy.Subscriber(f'/{v}/debug/apriltag_locations',     AprilTagDetectionArray,self.cbapriltagInfo,      queue_size=1)
+        rospy.Subscriber(f'/{v}/switch/control',               Int32,                 self.cbControlMode,       queue_size=1)
+        rospy.Subscriber(f'/{v}/detect/saved_apriltag',        Int32,                 self.cbSavedApriltag,     queue_size=1)
+        rospy.Subscriber(f'/{v}/switch/intersection_direction',Int32,                 self.cbIntersectionDir,   queue_size=1)
 
         self.pub_full = rospy.Publisher(f'/{v}/debug/full_view', CompressedImage, queue_size=1)
 
@@ -84,8 +89,11 @@ class DebugViewNode:
     def cbRedCount(self,     msg): self.red_pixel_count     = msg.data
     def cbControlV(self,     msg): self.control_v           = msg.data
 
-    def cbapriltagInfo(self,   msg): self.apriltag_locations   = msg.detections
-    def cbDuckieDetection(self, msg): self.duckie_detections    = msg.detections
+    def cbapriltagInfo(self,    msg): self.apriltag_locations = msg.detections
+    def cbDuckieDetection(self, msg): self.duckie_detections  = msg.detections
+    def cbControlMode(self,     msg): self.control_mode       = msg.data
+    def cbSavedApriltag(self,   msg): self.saved_apriltag     = msg.data
+    def cbIntersectionDir(self, msg): self.intersection_dir   = msg.data
 
     def build_full_debug_img(self):
         if self.raw_img is None or self.M is None:
@@ -125,7 +133,7 @@ class DebugViewNode:
 
         for duckie in self.duckie_detections:
             cv2.rectangle(raw, (duckie.bounding_box.x, duckie.bounding_box.y), (duckie.bounding_box.x + duckie.bounding_box.w, duckie.bounding_box.y + duckie.bounding_box.h), (0, 255, 255), 2)
-            cv2.putText(raw, f"Circ: {duckie.circularity:.2f}", (duckie.bounding_box.x, duckie.bounding_box.y + duckie.bounding_box.h - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+            cv2.putText(raw, f"Conf: {duckie.confidence:.2f}", (duckie.bounding_box.x, duckie.bounding_box.y + duckie.bounding_box.h - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
 
         cv2.circle(raw, proj(int(self.center_white),  det_row), 6, (255, 255, 255), -1)
         cv2.circle(raw, proj(int(self.center_yellow), det_row), 6, (0, 255, 255),   -1)
@@ -134,24 +142,48 @@ class DebugViewNode:
         
         
 
-        panel_w = 250
-        panel = np.zeros((raw_h, panel_w, 3), dtype=np.uint8)
-        cv2.putText(panel, "Lane Error:",         (10,  40), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
-        cv2.putText(panel, f"{self.lane_error:.3f}", (10, 75), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2)
-        cv2.putText(panel, "Red Pixels:",         (10, 130), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
-        cv2.putText(panel, f"{self.red_pixel_count}", (10, 165), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 80, 255), 2)
-        cv2.putText(panel, "Det. Row:",           (10, 220), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
-        cv2.putText(panel, f"{det_row}px",        (10, 255), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 0), 2)
-        cv2.putText(panel, "Speed (v):",          (10, 310), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
-        cv2.putText(panel, f"{self.control_v:.3f} m/s", (10, 345), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 200, 255), 2)
-        cv2.putText(panel, "AprilTags:",            (10, 400), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
-        cv2.putText(panel, f"{len(self.apriltag_locations)}", (10, 435), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 255), 2)
-        cv2.putText(panel, "Duckies:",          (10, 455), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
-        cv2.putText(panel, f"{len(self.duckie_detections)}", (10, 475), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+        MODE_NAMES  = {1: "LANE", 2: "OBSTACLE", 3: "STOP", 4: "INTERSECT"}
+        MODE_COLORS = {1: (0, 255, 0), 2: (0, 165, 255), 3: (0, 0, 255), 4: (255, 200, 0)}
+        DIR_NAMES   = {0: "< LEFT", 1: "^ STRAIGHT", 2: "> RIGHT"}
+
+        mode_color = MODE_COLORS.get(self.control_mode, (200, 200, 200))
+
+        # --- Panel links: allgemeine Infos ---
+        pw = 230
+        panel = np.zeros((raw_h, pw, 3), dtype=np.uint8)
+        cv2.putText(panel, "Lane Error:",             (10,  35), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (200, 200, 200), 1)
+        cv2.putText(panel, f"{self.lane_error:.3f}",  (10,  65), cv2.FONT_HERSHEY_SIMPLEX, 1.0,  (0, 255, 0),    2)
+        cv2.putText(panel, "Speed:",                  (10, 100), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (200, 200, 200), 1)
+        cv2.putText(panel, f"{self.control_v:.3f} m/s", (10, 128), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 200, 255), 2)
+        cv2.putText(panel, "Red Pixels:",             (10, 163), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (200, 200, 200), 1)
+        cv2.putText(panel, f"{self.red_pixel_count}", (10, 191), cv2.FONT_HERSHEY_SIMPLEX, 0.9,  (0, 80, 255),   2)
+        cv2.putText(panel, "Det. Row:",               (10, 226), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (200, 200, 200), 1)
+        cv2.putText(panel, f"{det_row}px",            (10, 252), cv2.FONT_HERSHEY_SIMPLEX, 0.8,  (255, 255, 0),  2)
+        cv2.line(panel, (5, 268), (pw - 5, 268), (60, 60, 60), 1)
+        cv2.putText(panel, f"Tags:  {len(self.apriltag_locations)}", (10, 298), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+        cv2.putText(panel, f"Ducks: {len(self.duckie_detections)}",  (10, 330), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0),   2)
+
+        # --- Panel rechts: Mode + mode-spezifische Infos ---
+        pw2 = 230
+        panel2 = np.zeros((raw_h, pw2, 3), dtype=np.uint8)
+        cv2.putText(panel2, "Mode:",                           (10,  35), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (200, 200, 200), 1)
+        cv2.putText(panel2, MODE_NAMES.get(self.control_mode, "???"), (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 1.1, mode_color, 2)
+        cv2.line(panel2, (5, 85), (pw2 - 5, 85), (60, 60, 60), 1)
+
+        if self.control_mode in (3, 4):  # Stop oder Intersection — gleiche Infos
+            tag_text = f"ID {self.saved_apriltag}" if self.saved_apriltag >= 0 else "---"
+            dir_text = DIR_NAMES.get(self.intersection_dir, "???")
+            cv2.putText(panel2, "Saved Tag:",  (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (200, 200, 200), 1)
+            cv2.putText(panel2, tag_text,      (10, 155), cv2.FONT_HERSHEY_SIMPLEX, 1.0,  (0, 255, 255),   2)
+            cv2.putText(panel2, "Direction:",  (10, 195), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (200, 200, 200), 1)
+            cv2.putText(panel2, dir_text,      (10, 228), cv2.FONT_HERSHEY_SIMPLEX, 0.9,  (255, 200, 0),   2)
+        elif self.control_mode == 2:  # Obstacle
+            cv2.putText(panel2, "Duckies:",                        (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (200, 200, 200), 1)
+            cv2.putText(panel2, f"{len(self.duckie_detections)}",  (10, 158), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 255),   2)
 
         
 
-        return np.hstack([raw, panel])
+        return np.hstack([raw, panel, panel2])
 
     def run(self):
         rate = rospy.Rate(10)
@@ -165,6 +197,8 @@ class DebugViewNode:
                         msg.format = "jpeg"
                         msg.data = np.array(cv2.imencode('.jpg', img)[1]).tobytes()
                         self.pub_full.publish(msg)
+                        cv2.imshow('Debug View', img)
+                        cv2.waitKey(1)
                 except Exception as e:
                     rospy.logwarn_throttle(5, f"debug_view_node failed: {e}")
             rate.sleep()

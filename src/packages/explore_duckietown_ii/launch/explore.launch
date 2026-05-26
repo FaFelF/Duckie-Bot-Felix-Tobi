@@ -1,0 +1,12 @@
+<launch>
+  <arg name="veh" default="$(env VEHICLE_NAME)" />
+
+  <node pkg="explore_duckietown_ii" type="configuration_node.py"     name="configuration_node"     output="screen" />
+  <node pkg="explore_duckietown_ii" type="detect_lane_node.py"       name="detect_lane_node"       output="screen" />
+  <node pkg="explore_duckietown_ii" type="detect_intersection_node.py" name="detect_intersection_node" output="screen" />
+  <node pkg="explore_duckietown_ii" type="switch_control_node.py"    name="switch_control_node"    output="screen" />
+  <node pkg="explore_duckietown_ii" type="detect_apriltag_node.py"   name="detect_apriltag_node"   output="screen" />
+  <node pkg="explore_duckietown_ii" type="detect_duckies_node.py"    name="detect_duckies_node"    output="screen" />
+  <node pkg="explore_duckietown_ii" type="debug_view_node.py"        name="debug_view_node"        output="screen" />
+  <node pkg="explore_duckietown_ii" type="control_lane_node.py"      name="control_lane_node"      output="screen" />
+</launch>

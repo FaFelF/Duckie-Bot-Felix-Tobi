@@ -36,7 +36,8 @@
     },
 
     "detection":{
-    "thresh": {"default": 2500, "min": 0, "max": 10000}
+    "thresh": {"default": 8000, "min": 0, "max": 10000},
+    "thresh_apriltag": {"default": 500, "min": 0, "max": 10000}
     }
 
 }

@@ -4,7 +4,7 @@ import rospy
 import numpy as np
 import cv2
 from duckietown_msgs.msg import AprilTagDetection, AprilTagDetectionArray
-from std_msgs.msg import Int32
+from std_msgs.msg import Int32, Bool
 from sensor_msgs.msg import CompressedImage
 from pupil_apriltags import Detector
 import util
@@ -28,6 +28,10 @@ class DetectAprilTagNode:
 
         self.is_running = False
         self.counter = 0
+
+        self.current_tag_id = -1
+        self.pub_saved_apriltag = rospy.Publisher(f'/{self._vehicle_name}/detect/saved_apriltag', Int32, queue_size=1)
+        self.sub_intersection_approaching = rospy.Subscriber(f'/{self._vehicle_name}/detect/intersection_approaching', Bool, self.cbIntersectionApproaching, queue_size=1)
 
         self.pub_debug_locations_apriltag = rospy.Publisher(f'/{self._vehicle_name}/debug/apriltag_locations', AprilTagDetectionArray, queue_size=1)
 
@@ -59,6 +63,10 @@ class DetectAprilTagNode:
             decode_sharpening=self.apriltag_decode_sharpening,
             debug=self.apriltag_debug
         )
+
+    def cbIntersectionApproaching(self, msg):
+        if msg.data:
+            self.pub_saved_apriltag.publish(Int32(data=self.current_tag_id))
 
     def cbFindAprilTag(self, msg):
         """
@@ -98,12 +106,15 @@ class DetectAprilTagNode:
 
                 largest = max(tags, key=lambda t: (t.corners[:,0].max() - t.corners[:,0].min()) *
                                                    (t.corners[:,1].max() - t.corners[:,1].min()))
+                self.current_tag_id = largest.tag_id
                 self.pub_apriltag.publish(largest.tag_id)
 
                 if self.pub_debug_locations_apriltag.get_num_connections() > 0:
                     self.pub_debug_locations_apriltag.publish(tag_detections)
             else:
                 self.pub_apriltag.publish(-1)
+                if self.pub_debug_locations_apriltag.get_num_connections() > 0:
+                    self.pub_debug_locations_apriltag.publish(AprilTagDetectionArray())
 
         except Exception as e:
             rospy.logerr(f"cbFindAprilTag error: {e}")

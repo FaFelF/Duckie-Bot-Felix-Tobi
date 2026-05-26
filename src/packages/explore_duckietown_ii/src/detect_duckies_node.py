@@ -21,35 +21,36 @@ class DetectDuckiesNode:
         self._vehicle_name = os.environ['VEHICLE_NAME']
         util.init_parameters(node_name,self.cbUpdateParameters)
 
+        self._crop_im_size = 400
+        self.counter = 0
+        self.is_running = False
+        self.final_duckies = []
+        self.image_middle = 320
+        self.center_white = None
+        self.center_yellow = None
+
         self._camera_topic = f"/{self._vehicle_name}/camera_node/image/compressed"
 
         # Kameratopic abonnieren, jedes neue Bild wird automatisch an cbFindDuckies weitergegeben
         self.sub_image_original = rospy.Subscriber(self._camera_topic, CompressedImage, self.cbFindDuckies, queue_size = 1)
 
         #Publisher für das Ergebnis der Kreuzungserkennung
-        self.pub_duckies = rospy.Publisher(f'/{self._vehicle_name}/detect/duckies', Bool, queue_size = 1)
 
         self.pub_debug_duckies = rospy.Publisher(f'/{self._vehicle_name}/debug/duckie_detection', DuckieDetectionArray, queue_size=1)
         self.pub_debug_contours = rospy.Publisher(f'/{self._vehicle_name}/debug/duckie_contours', CompressedImage, queue_size=1)
 
-        self.model = '/root/DuckieRace/src/packages/explore_duckietown_ii/models/duckie.onnx'
+        self.model = '/root/DuckieRace/src/packages/explore_duckietown_ii/models/duckie_v19.onnx'
 
         
         self.session = ort.InferenceSession(self.model)
         self.input_name = self.session.get_inputs()[0].name
 
         self.conf_threshold = 0.3
-        self.duckie_distance_activation_threshhold = 400
-        self.image_middle = 320
-        self.center_white = None
-        self.center_yellow = None
+        self.duckie_distance_threshhold = 400
 
+        self.pub_duckie_control_active = rospy.Publisher(f'/{self._vehicle_name}/detect/duckie_control_active', Bool, queue_size=1)
         self.pub_duckie_error = rospy.Publisher(f'/{self._vehicle_name}/detect/duckie_error', Float64, queue_size=1)
-
-        self._crop_im_size = 400
-        self.counter = 0
-        self.is_running = False
-        self.final_duckies = []
+        self.pub_duckies = rospy.Publisher(f'/{self._vehicle_name}/detect/duckies', Bool, queue_size=1)
 
     def cbUpdateParameters(self, parameters):
         """
@@ -124,48 +125,53 @@ class DetectDuckiesNode:
         if self.is_running:
             return
 
+        if rospy.is_shutdown():
+            return
+
         self.is_running = True
         self.counter = 0
-        
-        np_arr = np.frombuffer(image_msg.data, np.uint8)
-        img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
-        img = cv2.resize(img, (640,480))
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        img = img.astype(np.float32) / 255.0
-        img = np.transpose(img, (2, 0, 1))
-        img = np.expand_dims(img,0)  
 
-        cv_image = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
-        cv_image = cv2.resize(cv_image, (640,480))
-        self.image_middle = cv_image.shape[1] // 2
+        try:
+            np_arr = np.frombuffer(image_msg.data, np.uint8)
+            img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+            img = cv2.resize(img, (640,480))
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            img = img.astype(np.float32) / 255.0
+            img = np.transpose(img, (2, 0, 1))
+            img = np.expand_dims(img,0)
 
-        hsv = cv2.cvtColor(cv_image, cv2.COLOR_BGR2HSV)
-        
-        self.fnDetectDuckies(img)
+            cv_image = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+            cv_image = cv2.resize(cv_image, (640,480))
+            self.image_middle = cv_image.shape[1] // 2
 
-        duckie_mask = np.zeros(cv_image.shape[:2], dtype=np.uint8)
-        for x1, y1, x2, y2, conf in self.final_duckies:
-            duckie_mask[int(y1):int(y2), int(x1):int(x2)] = 255
+            hsv = cv2.cvtColor(cv_image, cv2.COLOR_BGR2HSV)
 
+            if rospy.is_shutdown():
+                return
+            self.fnDetectDuckies(img)
 
-        lowest_duckie = None
-        for duckie in self.final_duckies:
-            if lowest_duckie is None or duckie[3] > lowest_duckie[3]:
-                lowest_duckie = duckie
-        
-        if lowest_duckie is not None and lowest_duckie[3] <= self.duckie_distance_activation_threshhold:
-            #Enten-Bereiche im HSV-Bild schwärzen
-            hsv[duckie_mask == 255] = 0
+            duckie_mask = np.zeros(cv_image.shape[:2], dtype=np.uint8)
+            for x1, y1, x2, y2, conf in self.final_duckies:
+                duckie_mask[int(y1):int(y2), int(x1):int(x2)] = 255
 
-            #Fahrspur erkennen
-            self.fnDetectLane(hsv, lowest_duckie[3])
+            lowest_duckie = None
+            for duckie in self.final_duckies:
+                if lowest_duckie is None or duckie[3] > lowest_duckie[3]:
+                    lowest_duckie = duckie
 
-            #Entenfehler berechnen (distanz der Ente zu den Fahrspurlinien)
-            duckie_error = self.fnGetLaneDuckieError(lowest_duckie)
-            if duckie_error is not None:
-                self.pub_duckie_error.publish(Float64(data=duckie_error))       
-    
-        self.is_running = False
+            if lowest_duckie is not None and lowest_duckie[3] <= self.duckie_distance_threshhold:
+                hsv[duckie_mask == 255] = 0
+                self.fnDetectLane(hsv, lowest_duckie[3])
+                duckie_error = self.fnGetLaneDuckieError(lowest_duckie)
+                if duckie_error is not None:
+                    self.pub_duckie_error.publish(Float64(data=duckie_error))
+                    self.pub_duckie_control_active.publish(Bool(data=True))
+            else:
+                self.pub_duckie_control_active.publish(Bool(data=False))
+        except Exception as e:
+            rospy.logerr(f"cbFindDuckies failed: {e}")
+        finally:
+            self.is_running = False
 
     def fnDetectDuckies(self, image):
         """
@@ -182,9 +188,12 @@ class DetectDuckiesNode:
         self.final_duckies = []
 
         raw_output = self.session.run(None, {self.input_name:image})
-        detections = raw_output[0][0] 
+        detections = raw_output[0][0]
 
-        for  box in detections:
+        max_conf = max((box[4] for box in detections), default=0)
+        rospy.loginfo_throttle(2, f"Duckie detect: max_conf={max_conf:.3f}, threshold={self.conf_threshold}")
+
+        for box in detections:
             x1, y1, x2, y2, conf, class_id = box
             if conf >= self.conf_threshold:
                 self.final_duckies.append((x1, y1, x2, y2, conf))
@@ -228,6 +237,7 @@ class DetectDuckiesNode:
             return no_lane_value
 
     def fnDetectLane(self, hsv, distance):
+        distance = int(distance)
 
         mask_yellow = cv2.inRange(hsv,
                                (self.hue_yellow_l,self.saturation_yellow_l, self.lightness_yellow_l),
@@ -273,7 +283,7 @@ class DetectDuckiesNode:
                 msg = DuckieDetectionArray()
                 for x1, y1, x2, y2, conf in self.final_duckies:
                     d = DuckieDetection()
-                    d.bounding_box = Rect(x=x1, y=y1, w=x2-x1, h=y2-y1)
+                    d.bounding_box = Rect(x=int(x1), y=int(y1), w=int(x2-x1), h=int(y2-y1))
                     d.confidence = conf
                     msg.detections.append(d)
                 self.pub_debug_duckies.publish(msg)

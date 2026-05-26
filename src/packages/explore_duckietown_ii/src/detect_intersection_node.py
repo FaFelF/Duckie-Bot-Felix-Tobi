@@ -24,6 +24,7 @@ class DetectIntersectionNode:
 
         #Publisher für das Ergebnis der Kreuzungserkennung
         self.pub_intersection = rospy.Publisher(f'/{self._vehicle_name}/detect/intersection', Bool, queue_size = 1)
+        self.pub_intersection_approaching = rospy.Publisher(f'/{self._vehicle_name}/detect/intersection_approaching', Bool, queue_size=1)
 
         self._crop_im_size = 400
         self.is_running = False
@@ -73,6 +74,7 @@ class DetectIntersectionNode:
         self.lightness_red2_h = parameters["red2"]["vh"]["default"]
 
         self.thresh_red_pixels = parameters["detection"]["thresh"]["default"]
+        self.thresh_red_pixels_apriltag = parameters["detection"]["thresh_apriltag"]["default"]
 
     def crop_img(self, img):
         """
@@ -129,12 +131,24 @@ class DetectIntersectionNode:
         cv_image = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
         self.raw_img = cv_image
 
+        if rospy.is_shutdown():
+            return
+
         intersection_detected = self.detect_intersection(cv_image)
 
-        # Publish the result as a Bool message
         self.pub_intersection.publish(Bool(data=intersection_detected))
 
         self.is_running = False
+
+    def fnGetRedMask(self, roi):
+        hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+        mask_red1 = cv2.inRange(hsv,
+            (self.hue_red1_l, self.saturation_red1_l, self.lightness_red1_l),
+            (self.hue_red1_h, self.saturation_red1_h, self.lightness_red1_h))
+        mask_red2 = cv2.inRange(hsv,
+            (self.hue_red2_l, self.saturation_red2_l, self.lightness_red2_l),
+            (self.hue_red2_h, self.saturation_red2_h, self.lightness_red2_h))
+        return cv2.bitwise_or(mask_red1, mask_red2)
 
     def detect_intersection(self, image):
         """
@@ -149,29 +163,19 @@ class DetectIntersectionNode:
         Returns:
             bool: True wenn roter Streifen erkannt (Kreuzung vorhanden), sonst False
         """
-        # Nur das untere Drittel des Bildes analysieren, roter Streifen liegt auf dem Boden direkt vor dem Bot
         height = image.shape[0]
         width  = image.shape[1]
         roi = image[int(height * 0.66):, int(width * 0.3):]
-        # crop_img wird hier nicht benötigt, ROI-Slice reicht für die Farberkennung
-        #img = self.crop_img(roi)
 
-        # Convert the ROI to HSV color space
-        hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+        roi_detect_Apriltag = image[int(height * 0.4):int(height * 0.5), int(width * 0.3):int(width * 0.7)]
+        mask_detect_Apriltag = self.fnGetRedMask(roi_detect_Apriltag)
+        num_red_pixels_detect_Apriltag = cv2.countNonZero(mask_detect_Apriltag)
+        self.pub_intersection_approaching.publish(Bool(data=num_red_pixels_detect_Apriltag > self.thresh_red_pixels_apriltag))
 
-        # Create masks for the red lines using the specified HSV ranges
-        mask_red1 = cv2.inRange(hsv,
-                           (self.hue_red1_l,self.saturation_red1_l, self.lightness_red1_l),
-                           (self.hue_red1_h,self.saturation_red1_h, self.lightness_red1_h),)
 
-        mask_red2 = cv2.inRange(hsv,
-                           (self.hue_red2_l,self.saturation_red2_l, self.lightness_red2_l),
-                           (self.hue_red2_h,self.saturation_red2_h, self.lightness_red2_h),)
 
-        # Combine the two red masks
-        mask_red = cv2.bitwise_or(mask_red1, mask_red2)
 
-        # Count the number of red pixels in the combined mask
+        mask_red = self.fnGetRedMask(roi)
         num_red_pixels = cv2.countNonZero(mask_red)
 
         self.debug_img = roi.copy()
