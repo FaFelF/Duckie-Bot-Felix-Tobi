@@ -6,23 +6,19 @@ import signal
 import tkinter as tk
 import rospy
 import util
-import cv2
-import numpy as np
-from std_msgs.msg import String
+from std_msgs.msg import String, Int32
 from sensor_msgs.msg import CompressedImage
 
 class ConfigurationNode:
     def __init__(self, node_name):
         rospy.init_node(node_name)
         self._vehicle_name = os.environ['VEHICLE_NAME']
-        
-        
+
+
         self.config_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'config'))
         self.update_topic = f'/{self._vehicle_name}/update_parameters'
         self.publisher = rospy.Publisher(self.update_topic, String, queue_size=1)
-
-        self.image_subscriber = None
-        self.current_image = None
+        self.pub_selected_topic = rospy.Publisher(f'/{self._vehicle_name}/debug/selected_image_topic', String, queue_size=1, latch=True)
 
         self.available_nodes = []
         for file_name in sorted(os.listdir(self.config_dir)):
@@ -51,22 +47,15 @@ class ConfigurationNode:
         self.slider_frame = tk.Frame(self.root)
         self.slider_frame.pack(fill='both', expand=True, padx=10, pady=10)
         self.change_node(self.selected_node.get())
-        self.root.after(100, self._refresh_debug_image)
 
     def select_group(self, group_name):
         self.selected_group.set(group_name)
         self.change_group(group_name)
 
     def select_image_topic(self, topic_name):
-        print(f'changing image topic to {topic_name}')
         self.image_var.set(topic_name)
-        if self.image_subscriber:
-            self.image_subscriber.unregister()
         topic = topic_name if topic_name.startswith(f'/{self._vehicle_name}/') else f'/{self._vehicle_name}{topic_name}'
-        
-        print(f'changing image topic to {topic}')
-        self.image_subscriber = rospy.Subscriber(topic, CompressedImage, self.update_image, queue_size=1)
-        
+        self.pub_selected_topic.publish(String(data=topic))
 
     def rebuild_group_menu(self):
         groups = list(self.parameters.keys())
@@ -91,8 +80,6 @@ class ConfigurationNode:
         self.sliders = {}
         for name, values in self.parameters.get(self.selected_group.get(), {}).items():
             is_float = isinstance(values['min'], float)
-
-
             slider = tk.Scale(self.slider_frame, from_=values['min'], to=values['max'], orient='horizontal', label=name, command=lambda value, param=name: self.update_parameter(param, value), resolution=0.01 if is_float else 1)
             slider.set(values['default'])
             slider.pack(fill='x', pady=4)
@@ -104,16 +91,6 @@ class ConfigurationNode:
 
     def change_group(self, *_):
         self.rebuild_sliders()
-   
-    def update_image(self, msg):
-        np_arr = np.frombuffer(msg.data, np.uint8)
-        self.current_image = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
-
-    def _refresh_debug_image(self):
-        if self.current_image is not None:
-            cv2.imshow('Debug Image', self.current_image)
-            cv2.waitKey(1)
-        self.root.after(100, self._refresh_debug_image)
 
     def update_parameter(self, param, value):
         is_float = isinstance(self.parameters[self.selected_group.get()][param]['min'], float)
@@ -127,10 +104,7 @@ class ConfigurationNode:
         self.root.mainloop()
 
     def shutdown(self):
-        if self.image_subscriber:
-            self.image_subscriber.unregister()
         self.root.destroy()
-        #rospy.signal_shutdown('User ended program')
 
 
 if __name__ == '__main__':
@@ -138,4 +112,3 @@ if __name__ == '__main__':
     signal.signal(signal.SIGINT,  lambda s, f: node.root.quit())
     signal.signal(signal.SIGTERM, lambda s, f: node.root.quit())
     node.run()
-    #rospy.spin()

@@ -99,7 +99,7 @@ class ControlLaneNode:
         if self._control_mode != ControlType.Obstacle:
             return
         
-        error = msg.data
+        error = msg.data/650
 
         self.integral += error
         self.integral = max(-1.0, min(1.0, self.integral))  # ← Clamp
@@ -107,7 +107,7 @@ class ControlLaneNode:
         i = self.ki_duckie * self.integral
         d = self.kd_duckie * ((error - self.lastError)/0.1) #soll wert gewichtung des D-Teils erhöhen, da die Funktion 10 mal pro Sekunde aufgerufen wird
         self.lastError = error
-        self.v = self.MAX_VEL_duckie * max(0.5, 1 - abs(error) * self.speed_curve_factor)
+        self.v = (self.MAX_VEL_duckie * max(0.5, 1 - abs(error) * self.speed_curve_factor))/1
         self.a = p + i + d  
 
 
@@ -131,8 +131,12 @@ class ControlLaneNode:
                 direction = self.pending_direction
                 self.pending_direction = None
                 if direction == IntersectionsDirections.Left:
+                    ##Trick: 
+                    # twist.v = 0.2
+                    # twist.omega = 1.0
+                    #Gundel:
                     twist.v = 0.2
-                    twist.omega = 1.0
+                    twist.omega = 1.9
                     self.pub_cmd_vel.publish(twist)
                     rospy.sleep(self.sleep_time_left)
                 elif direction == IntersectionsDirections.Straight:
@@ -141,8 +145,8 @@ class ControlLaneNode:
                     self.pub_cmd_vel.publish(twist)
                     rospy.sleep(self.sleep_time_straight)
                 elif direction == IntersectionsDirections.Right:
-                    twist.v = 0.2
-                    twist.omega = -1.0
+                    twist.v = 0.15
+                    twist.omega = -2.5
                     self.pub_cmd_vel.publish(twist)
                     rospy.sleep(self.sleep_time_right)
                 self.pub_intersection_finished.publish(Bool(data=True))
@@ -151,6 +155,8 @@ class ControlLaneNode:
             elif self._control_mode != ControlType.Stop:
                 twist.v = self.v
                 twist.omega = self.a
+                # twist.v = 0.0
+                # twist.omega = 0.0
             else:
                 twist.v = 0.0
                 twist.omega = 0.0

@@ -22,21 +22,21 @@ class DetectLaneNode:
         util.init_parameters(node_name,self.cbUpdateParameters)
                 
         self._camera_topic = f"/{self._vehicle_name}/camera_node/image/compressed"
-        self.sub_image_original = rospy.Subscriber(self._camera_topic, CompressedImage, self.cbFindLane, queue_size = 1)
-        self.pub_lane = rospy.Publisher(f'/{self._vehicle_name}/detect/lane', Float64, queue_size = 1)
 
         self._crop_im_size = 400
         self.is_running = False
         self.counter = 0
 
-        # init debug channels
-        self.pub_debug_lane = rospy.Publisher(f'/{self._vehicle_name}/debug/lane_croped',CompressedImage,queue_size=1)
-        self.pub_debug_white = rospy.Publisher(f'/{self._vehicle_name}/debug/lane_white',CompressedImage,queue_size=1)
-        self.pub_debug_yellow = rospy.Publisher(f'/{self._vehicle_name}/debug/lane_yellow',CompressedImage,queue_size=1)
+        self.pub_lane = rospy.Publisher(f'/{self._vehicle_name}/detect/lane', Float64, queue_size = 1)
+        self.pub_debug_lane          = rospy.Publisher(f'/{self._vehicle_name}/debug/lane_croped',       CompressedImage, queue_size=1)
+        self.pub_debug_white         = rospy.Publisher(f'/{self._vehicle_name}/debug/lane_white',         CompressedImage, queue_size=1)
+        self.pub_debug_yellow        = rospy.Publisher(f'/{self._vehicle_name}/debug/lane_yellow',        CompressedImage, queue_size=1)
         self.pub_debug_center_white  = rospy.Publisher(f'/{self._vehicle_name}/debug/det_center_white',  Float64, queue_size=1)
         self.pub_debug_center_yellow = rospy.Publisher(f'/{self._vehicle_name}/debug/det_center_yellow', Float64, queue_size=1)
         self.pub_debug_lane_center   = rospy.Publisher(f'/{self._vehicle_name}/debug/det_lane_center',   Float64, queue_size=1)
         self.pub_debug_det_row       = rospy.Publisher(f'/{self._vehicle_name}/debug/det_row',           Int32,   queue_size=1)
+
+        self.sub_image_original = rospy.Subscriber(self._camera_topic, CompressedImage, self.cbFindLane, queue_size = 1)
 
         self.raw_img = None
         self.M = None

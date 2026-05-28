@@ -5,7 +5,7 @@ import os
 import rospy
 import numpy as np
 import cv2
-from std_msgs.msg import Float64, Int32
+from std_msgs.msg import Float64, Int32, String
 from duckietown_msgs.msg import AprilTagDetection, AprilTagDetectionArray
 from duckietown_msgs.msg import Rect
 from explore_duckietown_ii.msg import DuckieDetection, DuckieDetectionArray
@@ -50,8 +50,11 @@ class DebugViewNode:
         rospy.Subscriber(f'/{v}/switch/control',               Int32,                 self.cbControlMode,       queue_size=1)
         rospy.Subscriber(f'/{v}/detect/saved_apriltag',        Int32,                 self.cbSavedApriltag,     queue_size=1)
         rospy.Subscriber(f'/{v}/switch/intersection_direction',Int32,                 self.cbIntersectionDir,   queue_size=1)
+        rospy.Subscriber(f'/{v}/debug/selected_image_topic',   String,                self.cbSelectedTopic,     queue_size=1)
 
         self.pub_full = rospy.Publisher(f'/{v}/debug/full_view', CompressedImage, queue_size=1)
+        self.secondary_image = None
+        self.secondary_subscriber = None
 
     def cbUpdateParameters(self, parameters):
         c = parameters["crop_image"]
@@ -94,6 +97,18 @@ class DebugViewNode:
     def cbControlMode(self,     msg): self.control_mode       = msg.data
     def cbSavedApriltag(self,   msg): self.saved_apriltag     = msg.data
     def cbIntersectionDir(self, msg): self.intersection_dir   = msg.data
+
+    def cbSelectedTopic(self, msg):
+        topic = msg.data
+        if self.secondary_subscriber:
+            self.secondary_subscriber.unregister()
+        self.secondary_image = None
+        if topic and topic != f'/{self._vehicle_name}/debug/full_view':
+            self.secondary_subscriber = rospy.Subscriber(topic, CompressedImage, self.cbSecondaryImage, queue_size=1)
+
+    def cbSecondaryImage(self, msg):
+        np_arr = np.frombuffer(msg.data, np.uint8)
+        self.secondary_image = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
 
     def build_full_debug_img(self):
         if self.raw_img is None or self.M is None:
@@ -188,19 +203,21 @@ class DebugViewNode:
     def run(self):
         rate = rospy.Rate(10)
         while not rospy.is_shutdown():
-            if self.pub_full.get_num_connections() > 0:
-                try:
-                    img = self.build_full_debug_img()
-                    if img is not None:
+            try:
+                img = self.build_full_debug_img()
+                if img is not None:
+                    if self.pub_full.get_num_connections() > 0:
                         msg = CompressedImage()
                         msg.header.stamp = rospy.Time.now()
                         msg.format = "jpeg"
                         msg.data = np.array(cv2.imencode('.jpg', img)[1]).tobytes()
                         self.pub_full.publish(msg)
-                        cv2.imshow('Debug View', img)
-                        cv2.waitKey(1)
-                except Exception as e:
-                    rospy.logwarn_throttle(5, f"debug_view_node failed: {e}")
+                    cv2.imshow('Debug View', img)
+                    if self.secondary_image is not None:
+                        cv2.imshow('Debug Image', self.secondary_image)
+                    cv2.waitKey(1)
+            except Exception as e:
+                rospy.logwarn_throttle(5, f"debug_view_node failed: {e}")
             rate.sleep()
 
 

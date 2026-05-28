@@ -17,7 +17,7 @@
         "p": {"default": 5.5, "min": 0.0, "max": 10.0},
         "i": {"default": 0.15, "min": 0.0, "max": 10.0},
         "d": {"default": 2.75, "min": 0.0, "max": 10.0},
-        "max_vel": {"default": 0.25, "min": 0.0, "max": 10.0}
+        "max_vel": {"default": 0.10, "min": 0.0, "max": 10.0}
     }
 }
 }

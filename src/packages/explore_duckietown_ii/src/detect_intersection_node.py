@@ -19,22 +19,21 @@ class DetectIntersectionNode:
 
         self._camera_topic = f"/{self._vehicle_name}/camera_node/image/compressed"
 
-        # Kameratopic abonnieren, jedes neue Bild wird automatisch an cbFindIntersection weitergegeben
-        self.sub_image_original = rospy.Subscriber(self._camera_topic, CompressedImage, self.cbFindIntersection, queue_size = 1)
+        self._crop_im_size = 400
+        self.is_running = False
+        self.counter = 0
+        self.debug_img = None
+        self.raw_img = None
 
         #Publisher für das Ergebnis der Kreuzungserkennung
         self.pub_intersection = rospy.Publisher(f'/{self._vehicle_name}/detect/intersection', Bool, queue_size = 1)
         self.pub_intersection_approaching = rospy.Publisher(f'/{self._vehicle_name}/detect/intersection_approaching', Bool, queue_size=1)
-
-        self._crop_im_size = 400
-        self.is_running = False
-        self.counter = 0
-
         self.pub_debug_red = rospy.Publisher(f'/{self._vehicle_name}/debug/lane_red', CompressedImage, queue_size=1)
         self.pub_red_count = rospy.Publisher(f'/{self._vehicle_name}/debug/red_pixel_count', Int32, queue_size=1)
         self.pub_debug_raw = rospy.Publisher(f'/{self._vehicle_name}/debug/raw', CompressedImage, queue_size=1)
-        self.debug_img = None
-        self.raw_img = None
+
+        # Subscriber zuletzt registrieren, damit alle Publisher bereit sind
+        self.sub_image_original = rospy.Subscriber(self._camera_topic, CompressedImage, self.cbFindIntersection, queue_size = 1)
 
 
     def cbUpdateParameters(self, parameters):
