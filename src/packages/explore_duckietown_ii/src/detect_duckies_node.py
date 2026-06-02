@@ -61,6 +61,7 @@ class DetectDuckiesNode:
 
         self.pub_duckie_control_active = rospy.Publisher(f'/{self._vehicle_name}/detect/duckie_control_active', Bool, queue_size=1)
         self.pub_duckie_error = rospy.Publisher(f'/{self._vehicle_name}/detect/duckie_error', Float64, queue_size=1)
+        self.pub_duckie_distance_factor = rospy.Publisher(f'/{self._vehicle_name}/detect/duckie_distance_factor', Float64, queue_size=1)
         self.pub_duckies = rospy.Publisher(f'/{self._vehicle_name}/detect/duckies', Bool, queue_size=1)
 
         self._inference_thread = threading.Thread(target=self._inference_loop, daemon=True)
@@ -170,6 +171,11 @@ class DetectDuckiesNode:
                         lowest_duckie = duckie
 
                 if lowest_duckie is not None and self.duckie_distance_min <= lowest_duckie[3] <= self.duckie_distance_max:
+                    range_size = max(1, self.duckie_distance_max - self.duckie_distance_min)
+                    distance_factor = (lowest_duckie[3] - self.duckie_distance_min) / range_size
+                    distance_factor = max(0.0, min(1.0, distance_factor))
+                    self.pub_duckie_distance_factor.publish(Float64(data=distance_factor))
+
                     hsv[duckie_mask == 255] = 0
                     self.fnDetectLane(hsv, lowest_duckie[3])
                     duckie_center_x = (lowest_duckie[0] + lowest_duckie[2]) / 2
@@ -187,6 +193,7 @@ class DetectDuckiesNode:
                     self.debug_duckie_error = None
                     self.debug_lowest_duckie = None
                     self.debug_largest_gap = None
+                    self.pub_duckie_distance_factor.publish(Float64(data=0.0))
                     self.pub_duckie_control_active.publish(Bool(data=False))
             except Exception as e:
                 rospy.logerr(f"_inference_loop failed: {e}")
@@ -241,13 +248,13 @@ class DetectDuckiesNode:
         a = []
         if left_line:
             for row in range(max(0, distance-50), min(len(mask), distance+50)):
-                for x in range(self.image_middle, 0,-1):
+                for x in range(self.image_middle+50, 0,-1):
                     if th1[row][x] == 255:
                         a.append(x)
                         break
         else:
             for row in range(max(0, distance-50), min(len(mask), distance+50)):
-                for x in range(self.image_middle, len(mask[0])):
+                for x in range(self.image_middle-50, len(mask[0])):
                     if th1[row][x] == 255:
                         a.append(x)
                         break

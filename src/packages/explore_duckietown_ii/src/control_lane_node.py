@@ -22,6 +22,7 @@ class ControlLaneNode:
         self.v = 0
         self.a = 0
         self.pending_direction = None
+        self.duckie_distance_factor = 0.0
 
         twist_topic = f"/{self._vehicle_name}/car_cmd_switch_node/cmd"
         self.pub_cmd_vel = rospy.Publisher(twist_topic, Twist2DStamped, queue_size = 1)
@@ -40,6 +41,7 @@ class ControlLaneNode:
         self.pub_intersection_finished = rospy.Publisher(f'/{self._vehicle_name}/switch/intersection_finished', Bool, queue_size=1)
 
         self.sub_duckie_error = rospy.Subscriber(f'/{self._vehicle_name}/detect/duckie_error', Float64, self.cbAvoidDuckie, queue_size=1)
+        self.sub_duckie_factor = rospy.Subscriber(f'/{self._vehicle_name}/detect/duckie_distance_factor', Float64, self.cbDuckieDistanceFactor, queue_size=1)
 
 
 
@@ -95,20 +97,27 @@ class ControlLaneNode:
     def cbGetStopError(self, msg):
         pass
 
+    def cbDuckieDistanceFactor(self, msg):
+        self.duckie_distance_factor = msg.data
+
     def cbAvoidDuckie(self, msg):
         if self._control_mode != ControlType.Obstacle:
             return
-        
-        error = msg.data/650
+
+        #error = (msg.data / 650) * self.duckie_distance_factor
+        error = (msg.data / 750)
 
         self.integral += error
-        self.integral = max(-1.0, min(1.0, self.integral))  # ← Clamp
+        self.integral = max(-1.0, min(1.0, self.integral))
         p = self.kp_duckie * error
         i = self.ki_duckie * self.integral
-        d = self.kd_duckie * ((error - self.lastError)/0.1) #soll wert gewichtung des D-Teils erhöhen, da die Funktion 10 mal pro Sekunde aufgerufen wird
+        d = self.kd_duckie * ((error - self.lastError) / 0.1)
         self.lastError = error
-        self.v = (self.MAX_VEL_duckie * max(0.5, 1 - abs(error) * self.speed_curve_factor))/1
-        self.a = p + i + d  
+
+        danger = self.duckie_distance_factor * abs(error)
+        self.v = self.MAX_VEL_duckie * max(0.08, 1 - danger * 2)
+ 
+        self.a = p + i + d
 
 
 
