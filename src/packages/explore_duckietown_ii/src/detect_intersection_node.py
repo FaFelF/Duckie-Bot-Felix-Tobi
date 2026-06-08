@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import os
+import math
 import rospy
 import numpy as np
 import cv2
@@ -23,6 +24,7 @@ class DetectIntersectionNode:
         self.is_running = False
         self.counter = 0
         self.debug_img = None
+        self.debug_angle_img = None
         self.raw_img = None
 
         #Publisher für das Ergebnis der Kreuzungserkennung
@@ -31,6 +33,9 @@ class DetectIntersectionNode:
         self.pub_debug_red = rospy.Publisher(f'/{self._vehicle_name}/debug/lane_red', CompressedImage, queue_size=1)
         self.pub_red_count = rospy.Publisher(f'/{self._vehicle_name}/debug/red_pixel_count', Int32, queue_size=1)
         self.pub_debug_raw = rospy.Publisher(f'/{self._vehicle_name}/debug/raw', CompressedImage, queue_size=1)
+        # Winkel des roten Streifens relativ zur Horizontalen (0 = orthogonal). NaN wenn keine Linie sichtbar.
+        self.pub_intersection_angle = rospy.Publisher(f'/{self._vehicle_name}/detect/intersection_angle', Float64, queue_size=1)
+        self.pub_debug_angle = rospy.Publisher(f'/{self._vehicle_name}/debug/intersection_angle', CompressedImage, queue_size=1)
 
         # Subscriber zuletzt registrieren, damit alle Publisher bereit sind
         self.sub_image_original = rospy.Subscriber(self._camera_topic, CompressedImage, self.cbFindIntersection, queue_size = 1)
@@ -74,6 +79,10 @@ class DetectIntersectionNode:
 
         self.thresh_red_pixels = parameters["detection"]["thresh"]["default"]
         self.thresh_red_pixels_apriltag = parameters["detection"]["thresh_apriltag"]["default"]
+
+        # Parameter für die Winkelmessung des roten Streifens
+        self.align_roi_top = parameters["align"]["roi_top_pct"]["default"] / 100.0
+        self.align_min_area = parameters["align"]["min_area"]["default"]
 
     def crop_img(self, img):
         """
@@ -137,6 +146,9 @@ class DetectIntersectionNode:
 
         self.pub_intersection.publish(Bool(data=intersection_detected))
 
+        angle = self.fnGetRedAngle(cv_image)
+        self.pub_intersection_angle.publish(Float64(data=angle))
+
         self.is_running = False
 
     def fnGetRedMask(self, roi):
@@ -148,6 +160,61 @@ class DetectIntersectionNode:
             (self.hue_red2_l, self.saturation_red2_l, self.lightness_red2_l),
             (self.hue_red2_h, self.saturation_red2_h, self.lightness_red2_h))
         return cv2.bitwise_or(mask_red1, mask_red2)
+
+    def fnGetRedAngle(self, image):
+        """
+        Misst die Orientierung des roten Streifens relativ zur Bildhorizontalen.
+        0 Grad = Streifen waagerecht = Bot orthogonal zur Linie.
+
+        Es werden bewusst NICHT die Ecken benutzt (Streifen ist von Hand geklebt,
+        Ecken sind nicht symmetrisch), sondern die Hauptrichtung der gesamten
+        roten Fläche via cv2.fitLine. Das ist robust gegen schiefes Kleben.
+
+        Autor: Felix Faass
+
+        Args:
+            image: BGR-Kamerabild als numpy Array
+
+        Returns:
+            float: Winkel in Grad im Bereich [-90, 90], oder NaN wenn keine
+                   ausreichend große rote Fläche gefunden wurde.
+        """
+        height, width = image.shape[:2]
+        # Breiter ROI als bei der Erkennung: ganze Bildbreite, damit auch ein
+        # stark diagonaler Streifen (Bot steht schief) vollständig erfasst wird.
+        y0 = int(height * self.align_roi_top)
+        roi = image[y0:, :]
+
+        mask = self.fnGetRedMask(roi)
+        kernel = np.ones((5, 5), np.uint8)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+
+        debug = roi.copy()
+        debug[mask > 0] = (0, 0, 255)
+
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        angle = float('nan')
+        if contours:
+            cnt = max(contours, key=cv2.contourArea)
+            if cv2.contourArea(cnt) >= self.align_min_area:
+                vx, vy, x0f, y0f = cv2.fitLine(cnt, cv2.DIST_L2, 0, 0.01, 0.01).flatten()
+                angle = math.degrees(math.atan2(vy, vx))
+                # Richtungsvektor ist vorzeichen-mehrdeutig -> auf [-90, 90] normieren
+                if angle > 90:
+                    angle -= 180
+                elif angle < -90:
+                    angle += 180
+
+                length = float(width)
+                p1 = (int(x0f - vx * length), int(y0f - vy * length))
+                p2 = (int(x0f + vx * length), int(y0f + vy * length))
+                cv2.line(debug, p1, p2, (0, 255, 0), 2)
+
+        label = "Angle: --" if math.isnan(angle) else f"Angle: {angle:+.1f} deg"
+        cv2.putText(debug, label, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 0), 2)
+        self.debug_angle_img = debug
+        return angle
 
     def detect_intersection(self, image):
         """
@@ -164,7 +231,7 @@ class DetectIntersectionNode:
         """
         height = image.shape[0]
         width  = image.shape[1]
-        roi = image[int(height * 0.66):, int(width * 0.3):]
+        roi = image[int(height * 0.70):, int(width * 0.3):]
 
         roi_detect_Apriltag = image[int(height * 0.4):int(height * 0.5), int(width * 0.3):int(width * 0.7)]
         mask_detect_Apriltag = self.fnGetRedMask(roi_detect_Apriltag)
@@ -210,6 +277,12 @@ class DetectIntersectionNode:
                 raw_msg.format = "jpeg"
                 raw_msg.data = np.array(cv2.imencode('.jpg', self.raw_img)[1]).tobytes()
                 self.pub_debug_raw.publish(raw_msg)
+            if self.debug_angle_img is not None and self.pub_debug_angle.get_num_connections() > 0:
+                angle_msg = CompressedImage()
+                angle_msg.header.stamp = rospy.Time.now()
+                angle_msg.format = "jpeg"
+                angle_msg.data = np.array(cv2.imencode('.jpg', self.debug_angle_img)[1]).tobytes()
+                self.pub_debug_angle.publish(angle_msg)
             rate.sleep()
 
 

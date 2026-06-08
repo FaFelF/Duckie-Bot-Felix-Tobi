@@ -5,6 +5,7 @@ from std_msgs.msg import Float64, Int32, String, Bool
 
 from duckietown_msgs.msg import Twist2DStamped
 import os
+import math
 from switch_control_node import ControlType, IntersectionsDirections
 import yaml
 import util
@@ -24,6 +25,12 @@ class ControlLaneNode:
         self.pending_direction = None
         self.duckie_distance_factor = 0.0
 
+        # Ausrichten an der Kreuzung
+        self.intersection_angle = float('nan')
+        self._align_start_time = None
+        self._align_stable = 0
+        self._align_done = False
+
         twist_topic = f"/{self._vehicle_name}/car_cmd_switch_node/cmd"
         self.pub_cmd_vel = rospy.Publisher(twist_topic, Twist2DStamped, queue_size = 1)
         self.pub_debug_v     = rospy.Publisher(f'/{self._vehicle_name}/debug/control_v',     Float64, queue_size=1)
@@ -40,6 +47,9 @@ class ControlLaneNode:
 
         self.pub_intersection_finished = rospy.Publisher(f'/{self._vehicle_name}/switch/intersection_finished', Bool, queue_size=1)
 
+        self.pub_align_finished = rospy.Publisher(f'/{self._vehicle_name}/switch/align_finished', Bool, queue_size=1)
+        self.sub_intersection_angle = rospy.Subscriber(f'/{self._vehicle_name}/detect/intersection_angle', Float64, self.cbIntersectionAngle, queue_size=1)
+
         self.sub_duckie_error = rospy.Subscriber(f'/{self._vehicle_name}/detect/duckie_error', Float64, self.cbAvoidDuckie, queue_size=1)
         self.sub_duckie_factor = rospy.Subscriber(f'/{self._vehicle_name}/detect/duckie_distance_factor', Float64, self.cbDuckieDistanceFactor, queue_size=1)
 
@@ -51,8 +61,17 @@ class ControlLaneNode:
         rospy.on_shutdown(self.fnShutDown)
 
     def cbControl(self,msg):
-        self._control_mode = ControlType(msg.data)
-        
+        new_mode = ControlType(msg.data)
+        # Beim Eintritt in den Align-Zustand das Ausricht-Manöver frisch starten
+        if new_mode == ControlType.Align and self._control_mode != ControlType.Align:
+            self._align_start_time = None
+            self._align_stable = 0
+            self._align_done = False
+        self._control_mode = new_mode
+
+    def cbIntersectionAngle(self, msg):
+        self.intersection_angle = msg.data
+
 
 
     def cbUpdateParameters(self,parameters):
@@ -70,6 +89,16 @@ class ControlLaneNode:
         self.sleep_time_left     = parameters["intersection"]["sleep_time_left"]["default"]
         self.sleep_time_straight = parameters["intersection"]["sleep_time_straight"]["default"]
         self.sleep_time_right    = parameters["intersection"]["sleep_time_right"]["default"]
+
+        # Ausrichten an der Kreuzung
+        self.align_kp           = parameters["align"]["kp"]["default"]
+        self.align_v            = parameters["align"]["v"]["default"]
+        self.align_v_period     = parameters["align"]["v_period"]["default"]
+        self.align_omega_min    = parameters["align"]["omega_min"]["default"]
+        self.align_max_omega    = parameters["align"]["max_omega"]["default"]
+        self.align_tolerance    = parameters["align"]["tolerance_deg"]["default"]
+        self.align_timeout      = parameters["align"]["timeout"]["default"]
+        self.align_stable_count = parameters["align"]["stable_count"]["default"]
 
     # error between 1 and -1
     def cbFollowLane(self, error):
@@ -122,6 +151,63 @@ class ControlLaneNode:
 
 
 
+    def fnAlign(self, twist):
+        """
+        Dreht den Bot auf der Stelle, bis der rote Streifen (gemessener Winkel)
+        waagerecht ist -> Bot steht orthogonal zur Kreuzung.
+
+        Bewusst KEIN exakter Null-Abgleich: ein Toleranzband (align_tolerance)
+        verhindert Schwingen/Pendeln. Innerhalb der Toleranz wird gestoppt,
+        sobald der Wert über mehrere Zyklen stabil ist. Ein Timeout sorgt dafür,
+        dass das Manöver auch bei fehlender/verrauschter Linie nicht hängen bleibt.
+
+        Autor: Felix Faass
+        """
+        twist.v = 0.0
+        twist.omega = 0.0
+        if self._align_done:
+            return
+
+        now = rospy.Time.now()
+        if self._align_start_time is None:
+            self._align_start_time = now
+        elapsed = (now - self._align_start_time).to_sec()
+        angle = self.intersection_angle
+
+        done = False
+        if elapsed >= self.align_timeout:
+            rospy.logwarn("Align: Timeout erreicht, fahre ohne perfekte Ausrichtung fort")
+            done = True
+        elif angle is None or math.isnan(angle):
+            # keine gültige Linie sichtbar -> kurz warten, Timeout greift notfalls
+            pass
+        elif abs(angle) <= self.align_tolerance:
+            # innerhalb der Toleranz -> stillstehen und Stabilität zählen
+            self._align_stable += 1
+            if self._align_stable >= self.align_stable_count:
+                done = True
+        else:
+            self._align_stable = 0
+            # Pendel-Bogen: Fahrtrichtung periodisch wechseln. Die Räder bleiben am Rollen
+            # (keine Haftreibung, kein Stall), aber der Versatz hebt sich netto auf, weil
+            # omega durchgehend gleich dreht -> "auf der Stelle drehen", nur rollend.
+            # Großes align_v_period = reiner Rückwärtsbogen (Pendel praktisch aus).
+            half = int(elapsed / self.align_v_period)
+            v_dir = -1.0 if (half % 2 == 0) else 1.0
+            twist.v = self.align_v * v_dir
+            omega = self.align_kp * angle
+            if abs(omega) < self.align_omega_min:
+                omega = math.copysign(self.align_omega_min, omega)
+            twist.omega = max(-self.align_max_omega, min(self.align_max_omega, omega))
+
+        if done:
+            self._align_done = True
+            twist.omega = 0.0
+            self.pub_align_finished.publish(Bool(data=True))
+            rospy.loginfo("Align: ausgerichtet")
+
+        rospy.loginfo(f"Align: angle={angle:.2f} elapsed={elapsed:.2f} stable={self._align_stable} v={twist.v:.2f} omega={twist.omega:.2f} done={self._align_done}")
+
     def fnShutDown(self):
         rospy.loginfo("Shutting down. cmd_vel will be 0")
 
@@ -136,6 +222,13 @@ class ControlLaneNode:
         while not rospy.is_shutdown():
             twist = Twist2DStamped()
             twist.header.stamp = rospy.Time.now()
+            if self._control_mode == ControlType.Align:
+                self.fnAlign(twist)
+                self.pub_cmd_vel.publish(twist)
+                self.pub_debug_v.publish(Float64(data=twist.v))
+                self.pub_debug_omega.publish(Float64(data=twist.omega))
+                rate.sleep()
+                continue
             if self._control_mode == ControlType.Intersection and self.pending_direction is not None:
                 direction = self.pending_direction
                 self.pending_direction = None
@@ -145,7 +238,7 @@ class ControlLaneNode:
                     # twist.omega = 1.0
                     #Gundel:
                     twist.v = 0.2
-                    twist.omega = 1.9
+                    twist.omega = 1.5
                     self.pub_cmd_vel.publish(twist)
                     rospy.sleep(self.sleep_time_left)
                 elif direction == IntersectionsDirections.Straight:

@@ -157,8 +157,8 @@ class DebugViewNode:
         
         
 
-        MODE_NAMES  = {1: "LANE", 2: "OBSTACLE", 3: "STOP", 4: "INTERSECT"}
-        MODE_COLORS = {1: (0, 255, 0), 2: (0, 165, 255), 3: (0, 0, 255), 4: (255, 200, 0)}
+        MODE_NAMES  = {1: "LANE", 2: "OBSTACLE", 3: "STOP", 4: "INTERSECT", 5: "ALIGN"}
+        MODE_COLORS = {1: (0, 255, 0), 2: (0, 165, 255), 3: (0, 0, 255), 4: (255, 200, 0), 5: (255, 0, 255)}
         DIR_NAMES   = {0: "< LEFT", 1: "^ STRAIGHT", 2: "> RIGHT"}
 
         mode_color = MODE_COLORS.get(self.control_mode, (200, 200, 200))
@@ -185,7 +185,7 @@ class DebugViewNode:
         cv2.putText(panel2, MODE_NAMES.get(self.control_mode, "???"), (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 1.1, mode_color, 2)
         cv2.line(panel2, (5, 85), (pw2 - 5, 85), (60, 60, 60), 1)
 
-        if self.control_mode in (3, 4):  # Stop oder Intersection — gleiche Infos
+        if self.control_mode in (3, 4, 5):  # Stop, Intersection oder Align — gleiche Infos
             tag_text = f"ID {self.saved_apriltag}" if self.saved_apriltag >= 0 else "---"
             dir_text = DIR_NAMES.get(self.intersection_dir, "???")
             cv2.putText(panel2, "Saved Tag:",  (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (200, 200, 200), 1)

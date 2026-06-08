@@ -13,6 +13,7 @@ class ControlType(Enum):
     Obstacle = 2
     Stop = 3
     Intersection = 4
+    Align = 5
 
 class IntersectionsDirections(Enum):
     Left = 0
@@ -40,17 +41,22 @@ class SwitchControlNode:
         self.intersection_finished = False
         self.sub_intersection_finished = rospy.Subscriber(f'/{self._vehicle_name}/switch/intersection_finished', Bool, self.cbIntersectionFinished, queue_size=1)
 
+        # Ausricht-Status: erst abbiegen, wenn ausgerichtet (oder Sicherheits-Timeout)
+        self._aligned = False
+        self.sub_align_finished = rospy.Subscriber(f'/{self._vehicle_name}/switch/align_finished', Bool, self.cbAlignFinished, queue_size=1)
+
         self.duckie_detected = 0
 
         self._control_mode = ControlType.Lane
 
         self.intersection_running = False
         self._intersection_cooldown_start = None
-        self.intersection_cooldown_time = 7  # seconds
+        self.intersection_cooldown_time = 2  # seconds, ab Abbiege-Ende: nur Wegfahren von der Linie
         self.is_intersection_free = True
         self._waiting_on_intersection = False
         self._state_start_time = None
-        self.intersection_wait_time = 3  # seconds
+        self.intersection_wait_time = 3  # seconds, Mindest-Standzeit
+        self.intersection_align_max_time = 6  # seconds, Sicherheits-Obergrenze fürs Ausrichten
 
 
 
@@ -74,6 +80,9 @@ class SwitchControlNode:
         if self.intersection_finished:
             self._control_mode = ControlType.Lane
             self.intersection_finished = False
+            # Jetzt erst den Cooldown starten: ab hier fährt er von der Kreuzung weg.
+            # Der Timer muss nur noch das Wegfahren von der roten Linie abdecken.
+            self._intersection_cooldown_start = rospy.Time.now()
 
     def cbIntersection(self, msg):
         """
@@ -90,13 +99,28 @@ class SwitchControlNode:
 
         if msg.data and self._control_mode == ControlType.Lane:
             self.intersection_running = True
-            self._intersection_cooldown_start = rospy.Time.now()
-            self._control_mode = ControlType.Stop
-            rospy.loginfo(f"Intersection detected! Waiting for {self.intersection_wait_time} seconds...")
+            # Cooldown startet NICHT hier, sondern erst nach dem Abbiegen (cbIntersectionFinished),
+            # damit Ausrichten/Abbiegen beliebig lang dauern dürfen, ohne dass er erneut triggert.
+            self._intersection_cooldown_start = None
+            # Während der ohnehin vorhandenen Stop-Wartezeit gleich ausrichten,
+            # statt nur stillzustehen. Kostet keine zusätzliche Zeit.
+            self._control_mode = ControlType.Align
+            self._aligned = False
+            rospy.loginfo(f"Intersection detected! Aligning (min {self.intersection_wait_time}s, max {self.intersection_align_max_time}s)...")
             self._state_start_time = rospy.Time.now()
             self._waiting_on_intersection = True
             self.pub_chosen_direction.publish(self._chosen_direction.value)
 
+
+    def cbAlignFinished(self, msg):
+        """
+        Wird gesetzt, wenn control_lane_node das Ausrichten abgeschlossen hat.
+        Erst dann (und nach Ablauf der Mindest-Standzeit) wird abgebogen.
+
+        Autor: Felix Faass
+        """
+        if msg.data:
+            self._aligned = True
 
     def cbChooseDirection(self, msg):
         tag_id = msg.data
@@ -118,7 +142,14 @@ class SwitchControlNode:
                     self.intersection_running = False
 
             if self._waiting_on_intersection:
-                if (rospy.Time.now() - self._state_start_time).to_sec() >= self.intersection_wait_time:
+                elapsed = (rospy.Time.now() - self._state_start_time).to_sec()
+                min_passed = elapsed >= self.intersection_wait_time
+                max_passed = elapsed >= self.intersection_align_max_time
+                # Abbiegen, sobald ausgerichtet UND Mindest-Standzeit vorbei.
+                # Braucht das Ausrichten länger, bekommt es die Zeit (bis zum Sicherheits-Timeout).
+                if (min_passed and self._aligned) or max_passed:
+                    if max_passed and not self._aligned:
+                        rospy.logwarn("Align: Sicherheits-Timeout, biege trotz Schieflage ab")
                     self._waiting_on_intersection = False
                     self._control_mode = ControlType.Intersection
 

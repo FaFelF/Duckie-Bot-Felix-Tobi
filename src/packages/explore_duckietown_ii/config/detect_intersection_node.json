@@ -2,7 +2,8 @@
 "debug_image_topics":[
     "/debug/lane_croped",
     "/debug/lane_red",
-    "/debug/raw"
+    "/debug/raw",
+    "/debug/intersection_angle"
 ],
 
 "parameters":{
@@ -38,6 +39,11 @@
     "detection":{
     "thresh": {"default": 8000, "min": 0, "max": 10000},
     "thresh_apriltag": {"default": 500, "min": 0, "max": 10000}
+    },
+
+    "align":{
+    "roi_top_pct": {"default": 35, "min": 0, "max": 100},
+    "min_area": {"default": 600, "min": 0, "max": 50000}
     }
 
 }
