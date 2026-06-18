@@ -86,6 +86,7 @@ class DetectDuckiesNode:
         self.bottom_right_x = parameters["crop_image"]["bottom_right_x"]["default"]
         self.bottom_right_y = parameters["crop_image"]["bottom_right_y"]["default"]
 
+        self.duckie_enabled = bool(parameters["detection"]["enabled"]["default"])
         self.threshold_Duckie = parameters["detection"]["threshold"]["default"]
 
         self.hue_white_l = parameters["white"]["hl"]["default"]
@@ -133,6 +134,11 @@ class DetectDuckiesNode:
         return cv2.warpPerspective(img,M,(self._crop_im_size,self._crop_im_size))    
 
     def cbFindDuckies(self, image_msg):
+        # Schalter: Duckie-Erkennung aus -> nichts verarbeiten und Obstacle-Modus freigeben
+        if not self.duckie_enabled:
+            self.pub_duckie_control_active.publish(Bool(data=False))
+            self.pub_duckies.publish(Bool(data=False))
+            return
         np_arr = np.frombuffer(image_msg.data, np.uint8)
         cv_image = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
         cv_image = cv2.resize(cv_image, (640, 480))
