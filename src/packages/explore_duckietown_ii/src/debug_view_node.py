@@ -195,6 +195,10 @@ class DebugViewNode:
         elif self.control_mode == 2:  # Obstacle
             cv2.putText(panel2, "Duckies:",                        (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (200, 200, 200), 1)
             cv2.putText(panel2, f"{len(self.duckie_detections)}",  (10, 158), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 255),   2)
+        elif self.control_mode == 1:  # Lane — zuletzt gespeicherten Apriltag anzeigen
+            tag_text = f"ID {self.saved_apriltag}" if self.saved_apriltag >= 0 else "---"
+            cv2.putText(panel2, "Saved Tag:",  (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (200, 200, 200), 1)
+            cv2.putText(panel2, tag_text,      (10, 155), cv2.FONT_HERSHEY_SIMPLEX, 1.0,  (0, 255, 255),   2)
 
         
 

@@ -9,7 +9,7 @@
         "speed_curve_factor": {"default": 1.0, "min": 0.0, "max": 5.0}
     },
     "intersection":{
-        "sleep_time_left":     {"default": 2.9, "min": 0.0, "max": 5.0},
+        "sleep_time_left":     {"default": 2.7, "min": 0.0, "max": 5.0},
         "sleep_time_straight": {"default": 1.0, "min": 0.0, "max": 5.0},
         "sleep_time_right":    {"default": 1.0, "min": 0.0, "max": 5.0}
     },

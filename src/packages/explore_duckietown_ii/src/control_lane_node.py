@@ -166,6 +166,7 @@ class ControlLaneNode:
         twist.v = 0.0
         twist.omega = 0.0
         if self._align_done:
+            rospy.loginfo_throttle(1.0, "Align: ausgerichtet, halte Position (done=True)")
             return
 
         now = rospy.Time.now()
@@ -236,9 +237,14 @@ class ControlLaneNode:
                     ##Trick: 
                     # twist.v = 0.2
                     # twist.omega = 1.0
-                    #Gundel:
+
+                    ## Tick
                     twist.v = 0.2
-                    twist.omega = 1.5
+                    twist.omega = 1.2
+
+                    #Gundel:
+                    # twist.v = 0.2
+                    # twist.omega = 1.8
                     self.pub_cmd_vel.publish(twist)
                     rospy.sleep(self.sleep_time_left)
                 elif direction == IntersectionsDirections.Straight:
@@ -247,6 +253,9 @@ class ControlLaneNode:
                     self.pub_cmd_vel.publish(twist)
                     rospy.sleep(self.sleep_time_straight)
                 elif direction == IntersectionsDirections.Right:
+                    twist.v = 0.10
+                    twist.omega = 0
+                    rospy.sleep(0.2)
                     twist.v = 0.15
                     twist.omega = -2.5
                     self.pub_cmd_vel.publish(twist)
