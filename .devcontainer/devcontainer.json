@@ -4,6 +4,7 @@
         "dockerfile": "Dockerfile"
     },
     "runArgs": [
+        "--gpus", "all",
         "--net=host",
         "--privileged",
         "-e", "DISPLAY=${localEnv:DISPLAY}",
