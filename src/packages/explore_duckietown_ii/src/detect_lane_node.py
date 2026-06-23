@@ -215,11 +215,13 @@ class DetectLaneNode:
             image = cv2.circle(image, (int(center_white),  self.used_detection_row_white),  5,(255,255,255))
             image = cv2.circle(image, (int(center_yellow), self.used_detection_row_yellow), 5,(0,255,255))
 
-            #auskommentieren, wenn über vs code
-            cv2.imshow('lane detection', image)
-            #cv2.imshow('white', mask_white)
-            #cv2.imshow('yellow', mask_yellow)
-            cv2.waitKey(1)
+            # Fenster nur öffnen, wenn explizit gewünscht (DUCKIE_GUI=1).
+            # Default: kein Auto-Open -> kein X11-Block, kein -6-Crash.
+            if os.environ.get('DUCKIE_GUI') == '1':
+                cv2.imshow('lane detection', image)
+                #cv2.imshow('white', mask_white)
+                #cv2.imshow('yellow', mask_yellow)
+                cv2.waitKey(1)
         except Exception as e:
             rospy.logerr(f"cbFindLane failed: {e}")
         finally:

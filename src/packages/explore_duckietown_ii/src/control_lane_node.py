@@ -80,11 +80,17 @@ class ControlLaneNode:
         self.kd = parameters["pid"]["d"]["default"]
         self.MAX_VEL = parameters["pid"]["max_vel"]["default"]
         self.speed_curve_factor = parameters["pid"]["speed_curve_factor"]["default"]
+        # Untergrenze der Kurven-Drosselung (A): wie weit darf v in scharfen Kurven
+        # runter. 0.5 = max. halbe Geschwindigkeit, kleiner = langsamer/mehr Reaktionszeit.
+        self.min_speed_factor = parameters["pid"]["min_speed_factor"]["default"]
 
         self.kp_duckie = parameters["pid_duckie"]["p"]["default"]
         self.ki_duckie = parameters["pid_duckie"]["i"]["default"]
         self.kd_duckie = parameters["pid_duckie"]["d"]["default"]
         self.MAX_VEL_duckie = parameters["pid_duckie"]["max_vel"]["default"]
+        # Harter Stopp (B): ab diesem distance_factor (Naehe, 1.0 = ganz nah) v=0,
+        # statt in die Ente zu kriechen. 1.0 = praktisch nie stoppen.
+        self.duckie_stop_factor = parameters["pid_duckie"]["stop_factor"]["default"]
 
         self.sleep_time_left     = parameters["intersection"]["sleep_time_left"]["default"]
         self.sleep_time_straight = parameters["intersection"]["sleep_time_straight"]["default"]
@@ -116,7 +122,7 @@ class ControlLaneNode:
         d = self.kd * ((error - self.lastError)/0.1) #soll wert gewichtung des D-Teils erhöhen, da die Funktion 10 mal pro Sekunde aufgerufen wird
         self.lastError = error
 
-        self.v = self.MAX_VEL * max(0.5, 1 - abs(error) * self.speed_curve_factor)
+        self.v = self.MAX_VEL * max(self.min_speed_factor, 1 - abs(error) * self.speed_curve_factor)
         self.a = p + i + d
         
     def cbIntersectionControl(self, msg):
@@ -144,8 +150,13 @@ class ControlLaneNode:
         self.lastError = error
 
         danger = self.duckie_distance_factor * abs(error)
-        self.v = self.MAX_VEL_duckie * max(0.08, 1 - danger * 2)
- 
+        self.v = self.MAX_VEL_duckie * max(0.0, 1 - danger * 2)
+
+        # Harter Stopp, wenn die Ente sehr nah ist (B): sonst kroch der Bot in die
+        # Ente, weil die Formel oben nie ganz auf 0 kommt. stop_factor=1.0 -> aus.
+        if self.duckie_distance_factor >= self.duckie_stop_factor:
+            self.v = 0.0
+
         self.a = p + i + d
 
 

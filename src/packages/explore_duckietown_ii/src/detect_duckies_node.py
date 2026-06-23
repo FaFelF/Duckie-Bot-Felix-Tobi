@@ -26,6 +26,14 @@ class DetectDuckiesNode:
         self._crop_im_size = 400
         self.is_running = False
         self.final_duckies = []
+        # Mask-/Detection-Hysterese gegen Aussetzer (bimodale conf): letzte
+        # Erkennung max. _hold_frames Frames weiterverwenden -> gelbe Ente bleibt
+        # maskiert (sonst als Spurlinie erkannt), Ausweichen flackert nicht und
+        # laeuft kurz nach, wenn die Ente seitlich aus dem Bild faehrt.
+        # _hold_frames/_mask_padding/_min_gap_px/_gap_row_band -> cbUpdateParameters
+        # (wird in util.init_parameters synchron aufgerufen, bevor der Inferenz-Thread startet).
+        self._last_duckies = []
+        self._miss_count = 0
         self._last_inference_time = None
         self.min_inference_interval = 0.5
         self.image_middle = 320
@@ -54,7 +62,19 @@ class DetectDuckiesNode:
         self.model = '/root/DuckieRace/src/packages/explore_duckietown_ii/models/duckie_v19.onnx'
 
         
-        self.session = ort.InferenceSession(self.model)
+        # GPU bevorzugen, CPU als Fallback. Explizit angeben, damit ein
+        # stiller CPU-Fallback (z.B. fehlende/inkompatible CUDA-Libs) sichtbar wird.
+        self.session = ort.InferenceSession(
+            self.model,
+            providers=['CUDAExecutionProvider', 'CPUExecutionProvider'],
+        )
+        active_providers = self.session.get_providers()
+        if 'CUDAExecutionProvider' in active_providers:
+            rospy.loginfo("[detect_duckies] ONNX laeuft auf GPU (CUDAExecutionProvider).")
+        else:
+            rospy.logwarn(
+                "[detect_duckies] ONNX faellt auf CPU zurueck! Aktive Provider: %s. "
+                "Verfuegbar: %s", active_providers, ort.get_available_providers())
         self.input_name = self.session.get_inputs()[0].name
 
         self.conf_threshold = 0.3
@@ -106,6 +126,14 @@ class DetectDuckiesNode:
         self.conf_threshold = parameters["detection"]["conf_threshold"]["default"]
         self.duckie_distance_min = parameters["detection"]["distance_min"]["default"]
         self.duckie_distance_max = parameters["detection"]["distance_max"]["default"]
+        # Hysterese: wie viele Miss-Frames die letzte Erkennung gehalten wird (Nachlauf
+        # bei seitlich verschwindender Ente) + Padding fuers Maskieren.
+        self._hold_frames = int(parameters["detection"]["hold_frames"]["default"])
+        self._mask_padding = int(parameters["detection"]["mask_padding"]["default"])
+        # Mehr-Enten-Luckensuche: Mindestbreite einer Luecke in px (~Bot-Breite) und
+        # vertikale Toleranz, welche Enten die Detektions-Zeile blockieren.
+        self._min_gap_px = int(parameters["detection"]["min_gap_px"]["default"])
+        self._gap_row_band = int(parameters["detection"]["gap_row_band"]["default"])
     
 
     def crop_img(self, img):
@@ -167,16 +195,37 @@ class DetectDuckiesNode:
 
                 self.fnDetectDuckies(img)
 
-                duckie_mask = np.zeros(cv_image.shape[:2], dtype=np.uint8)
-                for x1, y1, x2, y2, conf in self.final_duckies:
-                    duckie_mask[int(y1):int(y2), int(x1):int(x2)] = 255
+                # Detection-Hysterese: verliert das Modell die Ente fuer wenige
+                # Frames, halten wir die letzte Erkennung weiter (siehe __init__).
+                if self.final_duckies:
+                    self._last_duckies = self.final_duckies
+                    self._miss_count = 0
+                    active_duckies = self.final_duckies
+                elif self._last_duckies and self._miss_count < self._hold_frames:
+                    self._miss_count += 1
+                    active_duckies = self._last_duckies
+                else:
+                    self._last_duckies = []
+                    active_duckies = []
+
+                h_img, w_img = cv_image.shape[:2]
+                pad = self._mask_padding
+                duckie_mask = np.zeros((h_img, w_img), dtype=np.uint8)
+                for x1, y1, x2, y2, conf in active_duckies:
+                    duckie_mask[max(0, int(y1) - pad):min(h_img, int(y2) + pad),
+                                max(0, int(x1) - pad):min(w_img, int(x2) + pad)] = 255
 
                 lowest_duckie = None
-                for duckie in self.final_duckies:
+                for duckie in active_duckies:
                     if lowest_duckie is None or duckie[3] > lowest_duckie[3]:
                         lowest_duckie = duckie
 
-                if lowest_duckie is not None and self.duckie_distance_min <= lowest_duckie[3] <= self.duckie_distance_max:
+                # Untere Schranke (zu weit weg) deaktiviert weiterhin. Oben NICHT mehr
+                # deaktivieren: ist die Ente naeher als distance_max, ist sie maximal
+                # gefaehrlich -> Control aktiv lassen, distance_factor unten auf 1.0 geclampt.
+                # (Vorher fiel die Ente bei y2>distance_max aus dem Bereich -> Bremse/Lenkung
+                # aus -> Bot kroch in die Ente.)
+                if lowest_duckie is not None and lowest_duckie[3] >= self.duckie_distance_min:
                     range_size = max(1, self.duckie_distance_max - self.duckie_distance_min)
                     distance_factor = (lowest_duckie[3] - self.duckie_distance_min) / range_size
                     distance_factor = max(0.0, min(1.0, distance_factor))
@@ -184,17 +233,19 @@ class DetectDuckiesNode:
 
                     hsv[duckie_mask == 255] = 0
                     self.fnDetectLane(hsv, lowest_duckie[3])
-                    duckie_center_x = (lowest_duckie[0] + lowest_duckie[2]) / 2
-                    if self.center_yellow is not None and duckie_center_x < self.center_yellow:
-                        self.pub_duckie_control_active.publish(Bool(data=False))
-                        self.debug_duckie_error = None
+                    # Verallgemeinerte Luecken-Suche ueber ALLE Enten in der Zeile
+                    # (auch zwischen zwei Enten durch), nicht nur naechste-Ente<->Linie.
+                    # Enten ausserhalb des Korridors (links von gelb / rechts von weiss)
+                    # werden in der Funktion geclippt -> ersetzt den alten Vorab-Check.
+                    duckie_error = self.fnGetLaneDuckieError(active_duckies, int(lowest_duckie[3]))
+                    self.debug_duckie_error = duckie_error
+                    self.debug_lowest_duckie = lowest_duckie
+                    if duckie_error is not None:
+                        self.pub_duckie_error.publish(Float64(data=duckie_error))
+                        self.pub_duckie_control_active.publish(Bool(data=True))
                     else:
-                        duckie_error = self.fnGetLaneDuckieError(lowest_duckie)
-                        self.debug_duckie_error = duckie_error
-                        self.debug_lowest_duckie = lowest_duckie
-                        if duckie_error is not None:
-                            self.pub_duckie_error.publish(Float64(data=duckie_error))
-                            self.pub_duckie_control_active.publish(Bool(data=True))
+                        # keine Ente im Fahrkorridor -> kein Ausweichen noetig
+                        self.pub_duckie_control_active.publish(Bool(data=False))
                 else:
                     self.debug_duckie_error = None
                     self.debug_lowest_duckie = None
@@ -291,22 +342,66 @@ class DetectDuckiesNode:
         self.center_white = self.get_x_for_driving(mask_white, distance, white_alternative, left_line=False)
         self.center_yellow = self.get_x_for_driving(mask_yellow, distance, yellow_alternative, left_line=True)
 
-    def fnGetLaneDuckieError(self, lowest_duckie):
-        if self.center_white is not None and self.center_yellow is not None:
-            Distance_Duckie_to_white = abs(lowest_duckie[2] - self.center_white)
-            Distance_Duckie_to_yellow = abs(self.center_yellow - lowest_duckie[0])
-            if Distance_Duckie_to_white < Distance_Duckie_to_yellow:
-                largest_gap = self.center_yellow + Distance_Duckie_to_yellow/2
-                self.debug_close_to_white = False
-            else:
-                largest_gap = self.center_white - Distance_Duckie_to_white/2
-                self.debug_close_to_white = True
+    def fnGetLaneDuckieError(self, active_duckies, row):
+        """
+        Sucht die beste Fahr-Luecke in der Detektions-Zeile. Statt nur die naechste
+        Ente gegen eine Linie zu betrachten, werden ALLE Enten (die diese Zeile
+        schneiden) als blockierte Intervalle behandelt und die freien Luecken
+        zwischen gelber Linie, den Enten und weisser Linie gebildet. Gewaehlt wird
+        die breiteste Luecke, die mindestens _min_gap_px breit ist (~Bot-Breite) ->
+        damit faehrt der Bot auch zwischen zwei Enten durch. Gibt es keine Ente im
+        Korridor, wird None zurueckgegeben (kein Ausweichen noetig).
 
-            self.debug_largest_gap = largest_gap
-            error = self.image_middle - largest_gap
-            return error
-        else:
+        Autor: Felix Faass
+        """
+        if self.center_white is None or self.center_yellow is None:
             return None
+
+        # Fahrkorridor: gelb (links) .. weiss (rechts). Defensiv sortieren.
+        left = min(self.center_yellow, self.center_white)
+        right = max(self.center_yellow, self.center_white)
+
+        # Enten, die diese Zeile (mit vertikaler Toleranz) schneiden, auf den
+        # Korridor geclippt als Hindernis-Intervalle sammeln.
+        obstacles = []
+        for x1, y1, x2, y2, conf in active_duckies:
+            if y1 - self._gap_row_band <= row <= y2 + self._gap_row_band:
+                ox1 = max(left, min(x1, x2))
+                ox2 = min(right, max(x1, x2))
+                if ox2 > ox1:
+                    obstacles.append((ox1, ox2))
+
+        if not obstacles:
+            # keine Ente im Fahrkorridor -> kein Ausweichen
+            self.debug_largest_gap = None
+            return None
+
+        # freie Luecken zwischen den (sortierten) Hindernissen bilden
+        obstacles.sort()
+        gaps = []
+        cursor = left
+        for ox1, ox2 in obstacles:
+            if ox1 > cursor:
+                gaps.append((cursor, ox1))
+            cursor = max(cursor, ox2)
+        if right > cursor:
+            gaps.append((cursor, right))
+
+        if not gaps:
+            # Korridor komplett blockiert -> keine fahrbare Luecke
+            self.debug_largest_gap = None
+            return None
+
+        # Immer die BREITESTE Luecke waehlen (nicht automatisch zwischen die Enten):
+        # bevorzugt eine, die breit genug fuer den Bot ist (>= _min_gap_px), sonst
+        # die breiteste verfuegbare (Stopp via distance_factor faengt's ab).
+        wide_enough = [g for g in gaps if (g[1] - g[0]) >= self._min_gap_px]
+        chosen = max(wide_enough or gaps, key=lambda g: g[1] - g[0])
+        target = (chosen[0] + chosen[1]) / 2.0
+
+        self.debug_largest_gap = target
+        self.debug_close_to_white = target > (left + right) / 2.0
+        return self.image_middle - target
 
     def run_debug(self):
         """
