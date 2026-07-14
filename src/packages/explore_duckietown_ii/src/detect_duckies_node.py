@@ -34,6 +34,13 @@ class DetectDuckiesNode:
         # (wird in util.init_parameters synchron aufgerufen, bevor der Inferenz-Thread startet).
         self._last_duckies = []
         self._miss_count = 0
+        # Glaettung der Linienpositionen gegen Springen/Verschwinden (verrauschte
+        # center_yellow/white -> zappelnder Korridor -> Flackern): EMA + letzte gute
+        # Position ueber ein paar Miss-Frames halten, statt auf den Bildrand zu springen.
+        self._line_smooth_alpha = 0.4   # 0..1: hoeher = reaktiver, niedriger = glatter
+        self._line_hold_frames = 5      # so viele Miss-Frames die letzte Position halten
+        self._line_state = {'white': {'val': None, 'miss': 0},
+                            'yellow': {'val': None, 'miss': 0}}
         self._last_inference_time = None
         self.min_inference_interval = 0.5
         self.image_middle = 320
@@ -62,11 +69,15 @@ class DetectDuckiesNode:
         self.model = '/root/DuckieRace/src/packages/explore_duckietown_ii/models/duckie_v19.onnx'
 
         
-        # GPU bevorzugen, CPU als Fallback. Explizit angeben, damit ein
-        # stiller CPU-Fallback (z.B. fehlende/inkompatible CUDA-Libs) sichtbar wird.
+        # GPU bevorzugen, CPU als Fallback. cudnn_conv_algo_search=HEURISTIC verhindert
+        # die langsame, erschoepfende Kernel-Suche beim ERSTEN Lauf (sonst dauert die
+        # erste Inferenz teils ~30s -> Boxen erst, nachdem der Bot schon faehrt).
         self.session = ort.InferenceSession(
             self.model,
-            providers=['CUDAExecutionProvider', 'CPUExecutionProvider'],
+            providers=[
+                ('CUDAExecutionProvider', {'cudnn_conv_algo_search': 'HEURISTIC'}),
+                'CPUExecutionProvider',
+            ],
         )
         active_providers = self.session.get_providers()
         if 'CUDAExecutionProvider' in active_providers:
@@ -76,6 +87,17 @@ class DetectDuckiesNode:
                 "[detect_duckies] ONNX faellt auf CPU zurueck! Aktive Provider: %s. "
                 "Verfuegbar: %s", active_providers, ort.get_available_providers())
         self.input_name = self.session.get_inputs()[0].name
+
+        # GPU-Warmup beim Start: erste CUDA-Inferenz richtet Kernel ein. Einmal mit
+        # Dummy-Bild durchlaufen, damit die erste ECHTE Erkennung sofort schnell ist
+        # und die Boxen nicht erst nach Sekunden (nach dem Losfahren) kommen.
+        try:
+            rospy.loginfo("[detect_duckies] GPU warmup...")
+            _t0 = time.time()
+            self.session.run(None, {self.input_name: np.zeros((1, 3, 480, 640), dtype=np.float32)})
+            rospy.loginfo("[detect_duckies] GPU warmup fertig (%.1fs).", time.time() - _t0)
+        except Exception as e:
+            rospy.logwarn("[detect_duckies] GPU warmup fehlgeschlagen: %s", e)
 
         self.conf_threshold = 0.3
 
@@ -291,7 +313,9 @@ class DetectDuckiesNode:
 
         #cv2.matchTemplate(contours, self.duckie_template, cv2.TM_CCOEFF_NORMED)
         
-    def get_x_for_driving(self, mask, distance, no_lane_value, left_line):
+    def get_x_for_driving(self, mask, distance, left_line):
+        # None, wenn keine Linie gefunden -> Caller (fnDetectLane) glaettet/haelt,
+        # statt auf den Bildrand zu springen.
         grad = cv2.Sobel(mask, cv2.CV_16S, 1, 0, ksize=3, scale=1, delta=0, borderType=cv2.BORDER_DEFAULT)
 
         th1 = []
@@ -321,7 +345,22 @@ class DetectDuckiesNode:
         if len(a) > 10:
             return np.median(a)
         else:
-            return no_lane_value
+            return None
+
+    def _smooth_line(self, name, raw, fallback):
+        """Glaettet eine Linienposition (EMA) und haelt die letzte gute Position fuer
+        ein paar Miss-Frames, statt bei Nicht-Erkennung auf den Bildrand zu springen."""
+        s = self._line_state[name]
+        if raw is not None:
+            s['val'] = float(raw) if s['val'] is None else (
+                self._line_smooth_alpha * float(raw) + (1.0 - self._line_smooth_alpha) * s['val'])
+            s['miss'] = 0
+            return s['val']
+        s['miss'] += 1
+        if s['val'] is not None and s['miss'] <= self._line_hold_frames:
+            return s['val']
+        s['val'] = None
+        return fallback
 
     def fnDetectLane(self, hsv, distance):
         distance = int(distance)
@@ -339,8 +378,11 @@ class DetectDuckiesNode:
         yellow_alternative = int(len(hsv[0]) * 0.05)
 
 
-        self.center_white = self.get_x_for_driving(mask_white, distance, white_alternative, left_line=False)
-        self.center_yellow = self.get_x_for_driving(mask_yellow, distance, yellow_alternative, left_line=True)
+        raw_white = self.get_x_for_driving(mask_white, distance, left_line=False)
+        raw_yellow = self.get_x_for_driving(mask_yellow, distance, left_line=True)
+        # Glaetten + letzte gute Position halten -> stabile Linien (ruhiger Korridor/PID)
+        self.center_white = self._smooth_line('white', raw_white, white_alternative)
+        self.center_yellow = self._smooth_line('yellow', raw_yellow, yellow_alternative)
 
     def fnGetLaneDuckieError(self, active_duckies, row):
         """
