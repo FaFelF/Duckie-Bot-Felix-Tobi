@@ -4,3 +4,4 @@ devel/*
 __pycache__/
 *.pyc
 logs/
+media/
