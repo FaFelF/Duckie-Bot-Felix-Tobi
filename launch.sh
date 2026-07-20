@@ -19,5 +19,20 @@ echo ""
 echo "Verfügbare Launcher:"
 PS3="Auswahl (Nummer): "
 select launcher in "${launchers[@]#$SCRIPT_DIR/launchers/}"; do
-    [ -n "$launcher" ] && bash "$SCRIPT_DIR/launchers/$launcher" && break
+    if [ -z "$launcher" ]; then
+        echo "Ungueltige Auswahl."
+        continue
+    fi
+
+    # Manche Launcher brauchen Argumente (gate_run.sh <knoten> <ausgang> <tore>,
+    # mapping_run.sh [knoten] [ausgang]). Vorher wurden sie immer ohne aufgerufen und
+    # brachen mit "Tor-Reihenfolge fehlt" ab. Die "Aufruf:"-Zeile aus dem Skriptkopf
+    # dient als Hilfe.
+    usage=$(grep -m1 '^# *Aufruf:' "$SCRIPT_DIR/launchers/$launcher" | sed 's/^# *//')
+    [ -n "$usage" ] && echo "  $usage"
+    read -r -p "Argumente (leer = keine): " args
+
+    # $args bewusst ohne Anfuehrungszeichen: soll in einzelne Argumente zerlegt werden.
+    bash "$SCRIPT_DIR/launchers/$launcher" $args
+    break
 done
