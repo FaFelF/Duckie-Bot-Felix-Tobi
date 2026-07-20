@@ -1,10 +1,24 @@
 [
   {
-    "edge_id": 4,
-    "from_node": "C",
-    "from_exit": 4,
+    "edge_id": 0,
+    "from_node": "A",
+    "from_exit": 1,
     "to_node": "B",
-    "to_exit": 3
+    "to_exit": 1
+  },
+  {
+    "edge_id": 3,
+    "from_node": "B",
+    "from_exit": 2,
+    "to_node": "A",
+    "to_exit": 4
+  },
+  {
+    "edge_id": 0,
+    "from_node": "A",
+    "from_exit": 1,
+    "to_node": "B",
+    "to_exit": 1
   },
   {
     "edge_id": 3,
@@ -28,18 +42,25 @@
     "to_exit": 3
   },
   {
-    "edge_id": 0,
+    "edge_id": 3,
     "from_node": "B",
-    "from_exit": 1,
+    "from_exit": 2,
     "to_node": "A",
+    "to_exit": 4
+  },
+  {
+    "edge_id": 0,
+    "from_node": "A",
+    "from_exit": 1,
+    "to_node": "B",
     "to_exit": 1
   },
   {
-    "edge_id": 2,
-    "from_node": "A",
+    "edge_id": 4,
+    "from_node": "B",
     "from_exit": 3,
     "to_node": "C",
-    "to_exit": 1
+    "to_exit": 4
   },
   {
     "edge_id": 1,
@@ -49,10 +70,17 @@
     "to_exit": 2
   },
   {
-    "edge_id": 3,
+    "edge_id": 2,
     "from_node": "A",
+    "from_exit": 3,
+    "to_node": "C",
+    "to_exit": 1
+  },
+  {
+    "edge_id": 4,
+    "from_node": "C",
     "from_exit": 4,
     "to_node": "B",
-    "to_exit": 2
+    "to_exit": 3
   }
 ]
