@@ -52,7 +52,17 @@ def build_gate_plan(graph: Graph, tag_sequence: List[int], start_node: str,
     # (relative_direction kennt nur links/geradeaus/rechts).
     entry_exit = hop.to_exit
 
-    for tag in tag_sequence:
+    # Die Startkante kann selbst schon das erste Ziel-Tor tragen (z.B. Start an C ueber
+    # Ausfahrt 4 = Kante mit Tor 9, erstes Ziel ist Tor 9). Dann ist es bereits durchfahren.
+    # Ohne diese Pruefung galt es weiter als offen, und weil ein direktes Zurueck eine
+    # Wende waere, fuhr der Bot erst eine komplette Schleife, um dieselbe Kante nochmal
+    # zu nehmen -- drei ueberfluessige Hops, bevor der Lauf ueberhaupt begann.
+    pending = list(tag_sequence)
+    if pending and graph.edges[first_edge].gate_tag == pending[0]:
+        target_hop_indices.append(0)
+        pending.pop(0)
+
+    for tag in pending:
         edge = graph.edge_by_tag(tag)
         if edge is None:
             raise ValueError(f"Kein Tor mit Tag {tag} im Graphen -- Mapping unvollstaendig?")

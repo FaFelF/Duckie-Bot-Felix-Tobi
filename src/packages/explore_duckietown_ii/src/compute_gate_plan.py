@@ -11,6 +11,8 @@ Aufruf:
 """
 
 import argparse
+import json
+import os
 
 from graph import Graph, save_plan
 from gate_planner import build_gate_plan, incidental_gate_crossings
@@ -40,6 +42,13 @@ def main():
     plan, target_hop_indices = build_gate_plan(
         graph, args.tags, start_node=args.start_node, start_exit=args.start_exit, seed=args.seed)
     save_plan(plan, args.output)
+
+    # Vorgegebene Tor-Reihenfolge + zugehoerige Hop-Indizes als Beidatei ablegen. plan.json
+    # selbst bleibt unveraendert (switch_control_node liest es), aber das Dashboard kann so
+    # waehrend der Fahrt zeigen, welche Reihenfolge vorgegeben war und wo man gerade steht.
+    targets_path = os.path.join(os.path.dirname(os.path.abspath(args.output)), 'gate_targets.json')
+    with open(targets_path, 'w') as fh:
+        json.dump({'tags': args.tags, 'hops': target_hop_indices}, fh, indent=2)
 
     print(f"Torlauf-Plan mit {len(plan)} Hops gespeichert: {args.output}")
     print(f"Beabsichtigte Tor-Reihenfolge: {args.tags} (Hop-Indizes: {target_hop_indices})")

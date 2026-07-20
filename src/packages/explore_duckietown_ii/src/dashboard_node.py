@@ -18,6 +18,7 @@ dieselbe Kante mehrfach im Plan vorkommen kann (Mapping-Backtracking,
 Nebenkreuzungen beim Torlauf) und der Schritt daraus sonst mehrdeutig waere.
 """
 
+import json
 import os
 
 import cv2
@@ -45,6 +46,18 @@ class DashboardNode:
         self.graph = Graph.load(map_path)
         self.plan = load_plan(plan_path)
         self.layout = compute_layout(self.graph, seed=0)
+
+        # Vorgegebene Tor-Reihenfolge (nur beim Torlauf vorhanden, von compute_gate_plan.py
+        # neben plan.json abgelegt). Fehlt sie -> Mapping-Lauf, dann gibt es keine Vorgabe.
+        targets_path = rospy.get_param(
+            '~gate_targets_path',
+            os.path.join(os.path.dirname(os.path.abspath(plan_path)), 'gate_targets.json'))
+        self.gate_targets = None
+        try:
+            with open(targets_path) as fh:
+                self.gate_targets = json.load(fh)
+        except (IOError, OSError, ValueError):
+            pass
 
         self._step = None  # None = noch keine Nachricht empfangen (Lauf startet gerade erst)
 
@@ -76,7 +89,8 @@ class DashboardNode:
         # (es lief nur als Topic /debug/dashboard).
         while not rospy.is_shutdown():
             try:
-                img = build_dashboard_image(self.graph, self.plan, self._step, self.layout, self._run_label)
+                img = build_dashboard_image(self.graph, self.plan, self._step, self.layout,
+                                            self._run_label, self.gate_targets)
                 msg = CompressedImage()
                 msg.header.stamp = rospy.Time.now()
                 msg.format = "jpeg"

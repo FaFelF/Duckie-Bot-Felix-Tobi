@@ -185,7 +185,8 @@ def _exit_label_positions(graph, node_id, layout, edge_groups,
 
 
 def build_dashboard_image(graph: Graph, plan: List[Hop], step: Optional[int],
-                           layout: Dict[str, Tuple[float, float]], run_label: str = "") -> np.ndarray:
+                           layout: Dict[str, Tuple[float, float]], run_label: str = "",
+                           gate_targets: Optional[dict] = None) -> np.ndarray:
     """
     step: roher Plan-Index (PlanState.step) oder None, wenn noch keine Nachricht
     empfangen wurde (Lauf startet gerade erst). step >= len(plan) heisst "Ziel
@@ -258,6 +259,33 @@ def build_dashboard_image(graph: Graph, plan: List[Hop], step: Optional[int],
 
     # 1. Wo der Bot laut Plan gerade ist: Knoten UND ueber welchen Ausgang er ihn
     #    verlassen hat -- der Ausgang ist noetig, um die Abbiegerichtung nachzuvollziehen.
+    # Vorgegebene Tor-Reihenfolge mit Fortschritt: erledigt (gedimmt), gerade dran
+    # (hervorgehoben), noch offen. Nur beim Torlauf vorhanden.
+    if gate_targets and gate_targets.get('tags'):
+        tags = gate_targets['tags']
+        hops = gate_targets.get('hops', [])
+        cv2.putText(panel, "Vorgegebene Tor-Reihenfolge:", (10, y), FONT, 0.5, (200, 200, 200), 1)
+        y += 30
+        x = 12
+        for i, tag in enumerate(tags):
+            hop_i = hops[i] if i < len(hops) else None
+            if step is None or hop_i is None:
+                col = COL_TEXT_MUTED
+            elif step > hop_i:
+                col = (110, 160, 110)          # erledigt
+            elif step == hop_i:
+                col = COL_EDGE_CURRENT         # gerade dran
+            else:
+                col = COL_TEXT                 # noch offen
+            txt = str(tag)
+            (tw, _), _ = cv2.getTextSize(txt, FONT, 0.6, 2)
+            cv2.putText(panel, txt, (x, y), FONT, 0.6, col, 2, cv2.LINE_AA)
+            x += tw + 5
+            if i < len(tags) - 1:
+                cv2.putText(panel, ">", (x, y), FONT, 0.45, COL_TEXT_MUTED, 1, cv2.LINE_AA)
+                x += 15
+        y += 36
+
     cv2.putText(panel, "Aktueller Knoten / Ausgang:", (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
     y += 30
     if current_hop is not None:

@@ -11,6 +11,7 @@ Aufruf:
 """
 
 import argparse
+import os
 
 from graph import Graph, save_plan
 from mapping_planner import build_mapping_plan, validate_plan
@@ -31,6 +32,12 @@ def main():
     # bleibt an der betroffenen Kreuzung haengen).
     validate_plan(graph, plan)
     save_plan(plan, args.output)
+
+    # Ein Mapping-Lauf hat keine vorgegebene Tor-Reihenfolge -> eine Beidatei aus einem
+    # frueheren Torlauf entfernen, sonst zeigt das Dashboard sie weiter an.
+    targets_path = os.path.join(os.path.dirname(os.path.abspath(args.output)), 'gate_targets.json')
+    if os.path.exists(targets_path):
+        os.remove(targets_path)
 
     covered = {h.edge_id for h in plan}
     print(f"Mapping-Plan mit {len(plan)} Hops gespeichert: {args.output}")
