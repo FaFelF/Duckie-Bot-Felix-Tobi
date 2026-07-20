@@ -13,7 +13,7 @@ Aufruf:
 import argparse
 
 from graph import Graph, save_plan
-from mapping_planner import build_mapping_plan
+from mapping_planner import build_mapping_plan, validate_plan
 
 
 def main():
@@ -27,6 +27,9 @@ def main():
 
     graph = Graph.load(args.known_map)
     plan = build_mapping_plan(graph, start_node=args.start_node, start_exit=args.start_exit, seed=args.seed)
+    # Lieber hier abbrechen als einen unfahrbaren Plan speichern (Wende -> der Bot
+    # bleibt an der betroffenen Kreuzung haengen).
+    validate_plan(graph, plan)
     save_plan(plan, args.output)
 
     covered = {h.edge_id for h in plan}

@@ -33,30 +33,66 @@ def _shuffled(items: list, rng: random.Random) -> list:
     return items
 
 
+def is_uturn(graph: Graph, node: str, entry_exit: int, edge_id: int) -> bool:
+    """
+    Wuerde das Verlassen von `node` ueber `edge_id` bedeuten, dass der Bot wieder
+    durch die Ausfahrt hinausfaehrt, durch die er hereingekommen ist?
+
+    Der Bot kann an einer Kreuzung nur LINKS, GERADEAUS oder RECHTS -- eine 180-Grad-
+    Wende gibt es als Kommando nicht (relative_direction wirft bei diff==0). Ein Plan
+    mit so einem Uebergang bleibt auf der Strecke haengen, statt nur schlecht zu sein.
+    """
+    if entry_exit is None:
+        return False
+    return graph.nodes[node].exits.get(entry_exit) == edge_id
+
+
 def shortest_path_edges(graph: Graph, start: str, goal: str,
-                         rng: random.Random) -> List[int]:
+                         rng: random.Random, entry_exit: Optional[int] = None,
+                         next_edge: Optional[int] = None) -> List[int]:
     """
-    Kuerzester Weg (kleinste Anzahl Kreuzungen) von start zu goal, als Liste von
-    edge_ids. Leer, wenn start == goal. Zufaellige Reihenfolge der Nachbarn ->
-    bei mehreren gleich kurzen Wegen wird zufaellig einer gefunden.
+    Kuerzester wendefreier Weg von start zu goal, als Liste von edge_ids.
+
+    BFS laeuft ueber ZUSTAENDE (Knoten, Einfahrt) statt nur ueber Knoten. Das ist
+    noetig, weil "erreichbar" hier von der Einfahrt abhaengt: derselbe Knoten kann
+    ueber die eine Einfahrt eine Weiterfahrt erlauben und ueber die andere nicht.
+    Eine reine Knoten-BFS findet dann den kurzen Weg, der in eine Wende laeuft, und
+    uebersieht den etwas laengeren, der fahrbar waere.
+
+    entry_exit: Ausfahrt, durch die der Bot an `start` hereingekommen ist.
+    next_edge:  Kante, die NACH dem Weg befahren werden soll -- der Zielzustand muss
+                sie ohne Wende erlauben. Damit kann derselbe Aufruf auch einen Umweg
+                finden, wenn das Ziel direkt auf der Einfahrtskante liegt.
+    Zufaellige Nachbar-Reihenfolge -> bei mehreren gleich kurzen Wegen zufaellige Wahl.
     """
-    if start == goal:
+    def reached(node: str, ex: Optional[int]) -> bool:
+        if node != goal:
+            return False
+        return next_edge is None or not is_uturn(graph, node, ex, next_edge)
+
+    if reached(start, entry_exit):
         return []
 
-    visited = {start}
-    queue = deque([(start, [])])
+    visited = {(start, entry_exit)}
+    queue = deque([(start, entry_exit, [])])
     while queue:
-        node, path = queue.popleft()
-        for edge_id, neighbor in _shuffled(list(graph.neighbors(node)), rng):
-            if neighbor in visited:
+        node, ex, path = queue.popleft()
+        for edge_id, _ in _shuffled(list(graph.neighbors(node)), rng):
+            if is_uturn(graph, node, ex, edge_id):
+                continue
+            hop = graph.hop_from_edge(edge_id, node)
+            state = (hop.to_node, hop.to_exit)
+            if state in visited:
                 continue
             new_path = path + [edge_id]
-            if neighbor == goal:
+            if reached(hop.to_node, hop.to_exit):
                 return new_path
-            visited.add(neighbor)
-            queue.append((neighbor, new_path))
+            visited.add(state)
+            queue.append((hop.to_node, hop.to_exit, new_path))
 
-    raise ValueError(f"Kein Weg von {start} nach {goal} gefunden (Graph nicht zusammenhaengend?)")
+    raise ValueError(
+        f"Kein wendefreier Weg von {start} nach {goal} gefunden "
+        f"(Einfahrt {entry_exit}, danach Kante {next_edge}).")
 
 
 def _has_unvisited_edge(graph: Graph, node: str, unvisited: set) -> bool:
@@ -105,9 +141,14 @@ def build_mapping_plan(graph: Graph, start_node: str, start_exit: int,
     plan.append(hop)
     unvisited.discard(first_edge)
     current = hop.to_node
+    entry_exit = hop.to_exit   # durch diese Ausfahrt sind wir hereingekommen
 
     while unvisited:
-        candidates = [edge_id for edge_id, _ in graph.neighbors(current) if edge_id in unvisited]
+        # Wende ausschliessen: der Bot kann an einer Kreuzung nur links/geradeaus/rechts.
+        # Ohne diese Pruefung waehlte rng.choice u.U. genau die Kante, ueber die er gerade
+        # hereingekommen ist -> Plan mit 180-Grad-Wende -> switch_control bleibt dort haengen.
+        candidates = [edge_id for edge_id, _ in graph.neighbors(current)
+                      if edge_id in unvisited and not is_uturn(graph, current, entry_exit, edge_id)]
 
         if candidates:
             edge_id = rng.choice(candidates)
@@ -115,6 +156,7 @@ def build_mapping_plan(graph: Graph, start_node: str, start_exit: int,
             plan.append(hop)
             unvisited.discard(edge_id)
             current = hop.to_node
+            entry_exit = hop.to_exit
             continue
 
         # keine unbefahrene Kante hier -> zum naechsten Knoten mit unbefahrener
@@ -125,13 +167,31 @@ def build_mapping_plan(graph: Graph, start_node: str, start_exit: int,
         if target is None:
             break  # sollte bei zusammenhaengendem Graphen nie eintreten
 
-        for edge_id in shortest_path_edges(graph, current, target, rng):
+        # Auch beim Zurueckfahren keine Wende: entry_exit mitgeben, damit der erste
+        # Schritt des Rueckwegs nicht durch die Einfahrt zurueckgeht.
+        for edge_id in shortest_path_edges(graph, current, target, rng, entry_exit):
             hop = graph.hop_from_edge(edge_id, current)
             plan.append(hop)
             unvisited.discard(edge_id)
             current = hop.to_node
+            entry_exit = hop.to_exit
 
     return plan
+
+
+def validate_plan(graph: Graph, plan: Plan) -> None:
+    """
+    Prueft, dass der Plan an keiner Kreuzung eine 180-Grad-Wende verlangt. So ein Plan
+    laesst switch_control_node an genau dieser Kreuzung haengen -- besser hier beim
+    Erzeugen auffallen als erst auf der Strecke.
+    """
+    for i in range(len(plan) - 1):
+        if plan[i].to_exit == plan[i + 1].from_exit:
+            raise ValueError(
+                f"Plan verlangt eine Wende an Knoten {plan[i].to_node} "
+                f"(Schritt {i}->{i+1}): herein ueber Ausfahrt {plan[i].to_exit}, "
+                f"hinaus ueber Ausfahrt {plan[i + 1].from_exit}. "
+                f"Der Bot kann nur links/geradeaus/rechts.")
 
 
 if __name__ == "__main__":

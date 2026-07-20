@@ -47,35 +47,47 @@ def build_gate_plan(graph: Graph, tag_sequence: List[int], start_node: str,
     hop = graph.hop_from_edge(first_edge, start_node)
     plan.append(hop)
     current = hop.to_node
+    # Ausfahrt, durch die wir am aktuellen Knoten hereingekommen sind. Noetig, damit kein
+    # Wege-Abschnitt eine 180-Grad-Wende verlangt -- die kann der Bot nicht fahren
+    # (relative_direction kennt nur links/geradeaus/rechts).
+    entry_exit = hop.to_exit
 
     for tag in tag_sequence:
         edge = graph.edge_by_tag(tag)
         if edge is None:
             raise ValueError(f"Kein Tor mit Tag {tag} im Graphen -- Mapping unvollstaendig?")
 
-        endpoints = (edge.node_a, edge.node_b)
-        if current not in endpoints:
-            dist_a = len(shortest_path_edges(graph, current, edge.node_a, rng))
-            dist_b = len(shortest_path_edges(graph, current, edge.node_b, rng))
-            if dist_a < dist_b:
-                entry = edge.node_a
-            elif dist_b < dist_a:
-                entry = edge.node_b
-            else:
-                entry = rng.choice(endpoints)
+        # Zu einem Kanten-Ende fahren, von dem aus das Tor OHNE Wende befahrbar ist.
+        # next_edge=edge.id erledigt beides in einem: die Anfahrt und (falls noetig)
+        # einen Umweg, wenn wir gerade ueber genau diese Kante hereingekommen sind.
+        routes = []
+        for endpoint in (edge.node_a, edge.node_b):
+            try:
+                routes.append(shortest_path_edges(graph, current, endpoint, rng,
+                                                  entry_exit, next_edge=edge.id))
+            except ValueError:
+                continue
+        if not routes:
+            raise ValueError(
+                f"Tor {tag} (Kante {edge.id}) von {current} aus nicht wendefrei erreichbar.")
+        shortest = min(len(r) for r in routes)
+        route = rng.choice([r for r in routes if len(r) == shortest])
 
-            for edge_id in shortest_path_edges(graph, current, entry, rng):
-                hop = graph.hop_from_edge(edge_id, current)
-                plan.append(hop)
-                current = hop.to_node
+        for edge_id in route:
+            hop = graph.hop_from_edge(edge_id, current)
+            plan.append(hop)
+            current = hop.to_node
+            entry_exit = hop.to_exit
 
-        # Ziel-Kante selbst durchqueren (das Tor) -- das ist die beabsichtigte Durchfahrt
         hop = graph.hop_from_edge(edge.id, current)
         plan.append(hop)
         target_hop_indices.append(len(plan) - 1)
         current = hop.to_node
+        entry_exit = hop.to_exit
 
     return plan, target_hop_indices
+
+
 
 
 def incidental_gate_crossings(plan: Plan, target_hop_indices: List[int],
