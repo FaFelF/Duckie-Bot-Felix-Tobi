@@ -217,8 +217,6 @@ class DebugViewNode:
                         msg.data = np.array(cv2.imencode('.jpg', img)[1]).tobytes()
                         self.pub_full.publish(msg)
                     cv2.imshow('Debug View', img)
-                    if self.secondary_image is not None:
-                        cv2.imshow('Debug Image', self.secondary_image)
                     cv2.waitKey(1)
             except Exception as e:
                 rospy.logwarn_throttle(5, f"debug_view_node failed: {e}")

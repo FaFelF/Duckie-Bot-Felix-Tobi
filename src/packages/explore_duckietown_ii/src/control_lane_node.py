@@ -24,6 +24,23 @@ class ControlLaneNode:
         self.a = 0
         self.pending_direction = None
         self.duckie_distance_factor = 0.0
+        # blocked = detect_duckies meldet: keine Luecke, durch die der Bot passt -> Pivot
+        self.duckie_blocked = False
+        # Pivot-Drehrichtung von detect_duckies: +1 = links, -1 = rechts
+        self.duckie_pivot_dir = 1
+        # Seite der zuletzt gesehenen NAHEN Ente (+1 links / -1 rechts). Danach steht sie
+        # noch seitlich neben uns -> nicht dorthin lenken, bis wir weit genug weiter sind.
+        self._last_duck_side = 0
+        # ist die nahe Ente gerade noch sichtbar? Nur wenn NICHT, greift die Daempfung
+        # (dann ist sie im toten Winkel neben uns).
+        self._duck_visible = False
+        # seit der letzten nahen Ente zurueckgelegte Strecke, aus v*dt integriert
+        # (Koppelnavigation aus dem Sollwert, keine Encoder).
+        self._pass_dist = 0.0
+        self._loop_dt = 0.1   # passend zur rospy.Rate(10) in run()
+        # Wackel-Pivot: Richtung (+1/-1) und Zeitpunkt des letzten Umschaltens
+        self._wiggle_dir = 1.0
+        self._wiggle_time = None
 
         # Ausrichten an der Kreuzung
         self.intersection_angle = float('nan')
@@ -52,6 +69,9 @@ class ControlLaneNode:
 
         self.sub_duckie_error = rospy.Subscriber(f'/{self._vehicle_name}/detect/duckie_error', Float64, self.cbAvoidDuckie, queue_size=1)
         self.sub_duckie_factor = rospy.Subscriber(f'/{self._vehicle_name}/detect/duckie_distance_factor', Float64, self.cbDuckieDistanceFactor, queue_size=1)
+        self.sub_duckie_blocked = rospy.Subscriber(f'/{self._vehicle_name}/detect/duckie_blocked', Bool, self.cbDuckieBlocked, queue_size=1)
+        self.sub_duckie_pivot_dir = rospy.Subscriber(f'/{self._vehicle_name}/detect/duckie_pivot_dir', Int32, self.cbDuckiePivotDir, queue_size=1)
+        self.sub_duckie_side = rospy.Subscriber(f'/{self._vehicle_name}/detect/duckie_side', Int32, self.cbDuckieSide, queue_size=1)
 
 
 
@@ -88,9 +108,33 @@ class ControlLaneNode:
         self.ki_duckie = parameters["pid_duckie"]["i"]["default"]
         self.kd_duckie = parameters["pid_duckie"]["d"]["default"]
         self.MAX_VEL_duckie = parameters["pid_duckie"]["max_vel"]["default"]
-        # Harter Stopp (B): ab diesem distance_factor (Naehe, 1.0 = ganz nah) v=0,
-        # statt in die Ente zu kriechen. 1.0 = praktisch nie stoppen.
-        self.duckie_stop_factor = parameters["pid_duckie"]["stop_factor"]["default"]
+        # Kriech-Untergrenze beim Ausweichen: solange eine passierbare Luecke da ist,
+        # NICHT auf 0 bremsen (sonst kann der Differentialantrieb nicht herumlenken).
+        # Angehalten wird nur, wenn detect_duckies "blockiert" meldet (keine Luecke).
+        self.min_vel_duckie = parameters["pid_duckie"]["min_vel"]["default"]
+        if self.min_vel_duckie > self.MAX_VEL_duckie:
+            # Sonst gewinnt der Floor immer -> v haengt konstant auf min_vel, max_vel und
+            # brake_gain sind wirkungslos (und man dreht an Reglern ohne jeden Effekt).
+            rospy.logwarn("[control_lane] pid_duckie.min_vel (%.3f) > max_vel (%.3f) -> "
+                          "auf max_vel begrenzt. Bitte Config pruefen.",
+                          self.min_vel_duckie, self.MAX_VEL_duckie)
+            self.min_vel_duckie = self.MAX_VEL_duckie
+        # Horizontales Bremsen: wie stark |error| (seitlicher Ausschlag) das Tempo drueckt.
+        self.duckie_brake_gain = parameters["pid_duckie"]["brake_gain"]["default"]
+        # Pivot (kein Durchkommen): Drehgeschwindigkeit auf der Stelle. Muss gross genug
+        # sein, um die Haftreibung bei v=0 zu ueberwinden (vgl. align.omega_min).
+        self.pivot_omega = parameters["pid_duckie"]["pivot_omega"]["default"]
+        # Wackel-Pivot: Schubstaerke und Umschaltintervall des Vor-/Zurueck-Ruckelns,
+        # das die Haftreibung bricht, damit er sich auf der Stelle ueberhaupt dreht.
+        self.wiggle_v = parameters["pid_duckie"]["wiggle_v"]["default"]
+        self.wiggle_period = parameters["pid_duckie"]["wiggle_period"]["default"]
+        # Wie WEIT (in m) der Bot nach der letzten nahen Ente fahren muss, bevor er wieder
+        # zu ihrer Seite lenken darf (sie steht so lange noch neben ihm). Strecke statt
+        # Zeit, damit es unabhaengig vom Tempo ist. Zu gross -> Kurven dorthin gehen nicht.
+        self.pass_lock_distance = parameters["pid_duckie"]["pass_lock_distance"]["default"]
+        # Wie stark im blinden Fenster noch zur Enten-Seite gelenkt werden darf (nicht 0 =
+        # kein Verbot, nur Daempfung). Hoch = kaum Daempfung, 0 = hartes Verbot (alt).
+        self.pass_lock_omega = parameters["pid_duckie"]["pass_lock_omega"]["default"]
 
         self.sleep_time_left     = parameters["intersection"]["sleep_time_left"]["default"]
         self.sleep_time_straight = parameters["intersection"]["sleep_time_straight"]["default"]
@@ -135,12 +179,85 @@ class ControlLaneNode:
     def cbDuckieDistanceFactor(self, msg):
         self.duckie_distance_factor = msg.data
 
+    def cbDuckieBlocked(self, msg):
+        self.duckie_blocked = msg.data
+
+    def cbDuckiePivotDir(self, msg):
+        # +1 = links, -1 = rechts (von detect_duckies: weg von der naechsten Linie)
+        self.duckie_pivot_dir = 1 if msg.data >= 0 else -1
+
+    def cbDuckieSide(self, msg):
+        # Solange eine nahe Ente sichtbar ist (data != 0), Strecken-Zaehler zuruecksetzen
+        # -> die Daempfung laeuft erst ab der LETZTEN Sichtung los. Und: solange sie
+        # sichtbar ist, regelt die Ausweich-Logik selbst -> dann KEINE Daempfung.
+        if msg.data != 0:
+            self._last_duck_side = msg.data
+            self._pass_dist = 0.0
+            self._duck_visible = True
+        else:
+            self._duck_visible = False
+
+    def fnApplyPassLock(self, omega):
+        """Direkt nach dem Vorbeifahren steht die Ente noch SEITLICH neben dem Bot - sie ist
+        nur aus dem Kamerabild verschwunden, nicht aus der Welt (toter Winkel). In diesem
+        kurzen blinden Fenster wird das Lenken zu ihrer Seite GEDAEMPFT, damit der Bot sie
+        nicht mit der Flanke streift.
+
+        Bewusst nur daempfen, nicht verbieten: ein hartes Verbot hat ihn in der Kurve aus
+        der Strecke getragen, weil er nicht mehr zurueklenken durfte. Er darf also weiter
+        in ihre Richtung, nur nicht reissen.
+
+        Greift NUR, wenn die Ente nicht mehr sichtbar ist - solange man sie sieht, regelt
+        die Ausweich-Logik ohnehin um sie herum. Und ueber die zurueckgelegte STRECKE
+        (v*dt) statt ueber Zeit: nur echtes Vorwaertsfahren bringt uns vorbei. Beim Pivot
+        (v=0) zaehlt nichts hoch - richtig, Drehen auf der Stelle kommt an keiner Ente vorbei.
+
+        Autor: Felix Faass
+        """
+        if self.duckie_blocked:
+            # Pivot ist ein bewusstes Manoever und die einzige Option, wenn nichts mehr
+            # durchpasst -> NICHT daempfen, sonst friert der Bot genau wieder ein.
+            return omega
+        if self._last_duck_side == 0 or self._duck_visible:
+            return omega
+        if self._pass_dist >= self.pass_lock_distance:
+            return omega
+        lim = self.pass_lock_omega
+        if self._last_duck_side > 0:
+            return min(omega, lim)    # Ente war LINKS -> nach links nur noch gedaempft
+        return max(omega, -lim)       # Ente war RECHTS -> nach rechts nur noch gedaempft
+
     def cbAvoidDuckie(self, msg):
         if self._control_mode != ControlType.Obstacle:
             return
 
-        #error = (msg.data / 650) * self.duckie_distance_factor
-        error = (msg.data / 750)
+        # Ente zu nah/zu eng zum Drumherumfahren -> PIVOT statt einfrieren: auf der
+        # Stelle drehen, WEG von der naechsten Linie (Richtung kommt von detect_duckies).
+        # Gedreht wird, bis wieder eine passierbare Luecke da ist (dann faellt
+        # duckie_blocked von selbst weg).
+        if self.duckie_blocked:
+            # WACKEL-PIVOT: bei v=0 stallen die Motoren auf dieser HW (Haftreibung +
+            # Stuetzkugel), er dreht sich dann gar nicht. Trick: v staendig zwischen vor
+            # und zurueck umschalten -> die Raeder rollen (nur kinetische Reibung), der
+            # Versatz hebt sich netto auf, und omega dreht durch. Gleiches Prinzip wie der
+            # Pendel-Bogen in fnAlign, nur schneller getaktet.
+            now = rospy.Time.now()
+            if self._wiggle_time is None or \
+                    (now - self._wiggle_time).to_sec() >= self.wiggle_period:
+                self._wiggle_dir *= -1.0
+                self._wiggle_time = now
+            self.v = self.wiggle_v * self._wiggle_dir
+            self.a = self.pivot_omega * self.duckie_pivot_dir
+            self.integral = 0.0
+            self.lastError = 0.0
+            return
+        self._wiggle_time = None   # Pivot vorbei -> Takt fuer den naechsten neu starten
+
+        # duckie_error kommt bereits auf [-1, 1] normiert (halbe Bildbreite), also in der
+        # GLEICHEN Konvention wie /detect/lane -> pid_duckie ist direkt mit pid vergleichbar.
+        # Frueher: rohe Pixel /750 -> Bereich nur ~+-0.43, damit hatte der Enten-Modus rund
+        # ein Drittel der Lenkautoritaet des Spur-Reglers und trug in Kurven raus.
+        error = msg.data
 
         self.integral += error
         self.integral = max(-1.0, min(1.0, self.integral))
@@ -149,13 +266,12 @@ class ControlLaneNode:
         d = self.kd_duckie * ((error - self.lastError) / 0.1)
         self.lastError = error
 
-        danger = self.duckie_distance_factor * abs(error)
-        self.v = self.MAX_VEL_duckie * max(0.0, 1 - danger * 2)
-
-        # Harter Stopp, wenn die Ente sehr nah ist (B): sonst kroch der Bot in die
-        # Ente, weil die Formel oben nie ganz auf 0 kommt. stop_factor=1.0 -> aus.
-        if self.duckie_distance_factor >= self.duckie_stop_factor:
-            self.v = 0.0
+        # Horizontal bremsen: je groesser der seitliche Ausweich-Ausschlag (|error|),
+        # desto langsamer -> mehr Zeit fuer scharfe Ausweichboegen. NICHT mehr ueber die
+        # vertikale Distanz. min_vel_duckie haelt Vortritt (Differentialantrieb muss
+        # rollen, um herumzulenken); echt gestoppt wird nur oben (blocked).
+        self.v = max(self.min_vel_duckie,
+                     self.MAX_VEL_duckie * max(0.0, 1 - abs(error) * self.duckie_brake_gain))
 
         self.a = p + i + d
 
@@ -276,7 +392,17 @@ class ControlLaneNode:
                 continue
             elif self._control_mode != ControlType.Stop:
                 twist.v = self.v
-                twist.omega = self.a
+                # Strecke seit der letzten nahen Ente mitzaehlen (Koppelnavigation aus
+                # dem kommandierten v) -> die Sperre unten laeuft ueber Strecke, nicht Zeit.
+                # Beim Wackel-Pivot NICHT zaehlen: er ruckelt vor/zurueck, kommt netto aber
+                # nicht vom Fleck - sonst liefe die Pass-Daempfung ab, ohne dass er an der
+                # Ente vorbei ist.
+                if not self.duckie_blocked:
+                    self._pass_dist += abs(twist.v) * self._loop_dt
+                # Gerade an einer Ente vorbei? Dann nicht in ihre Richtung zurueklenken,
+                # sie steht noch seitlich neben uns. Gilt fuer Lane UND Obstacle, aber
+                # NICHT fuer Align/Intersection (bewusste Manoever, oben abgehandelt).
+                twist.omega = self.fnApplyPassLock(self.a)
                 # twist.v = 0.0
                 # twist.omega = 0.0
             else:
