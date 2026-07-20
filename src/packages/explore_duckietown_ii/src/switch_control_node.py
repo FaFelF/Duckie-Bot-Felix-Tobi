@@ -2,11 +2,12 @@
 
 
 import rospy
-import random
 from std_msgs.msg import Float64, Int32, Bool
 from enum import Enum
 
 import os
+
+from graph import PlanState, load_plan
 
 class ControlType(Enum):
     Lane = 1
@@ -35,8 +36,21 @@ class SwitchControlNode:
 
         self.sub_intersection = rospy.Subscriber(f'/{self._vehicle_name}/detect/intersection', Bool, self.cbIntersection, queue_size=1)
 
-        self._chosen_direction = IntersectionsDirections.Straight
-        self.sub_saved_apriltag = rospy.Subscriber(f'/{self._vehicle_name}/detect/saved_apriltag', Int32, self.cbChooseDirection, queue_size=1)
+        # Plan (Mapping- oder Gate-Lauf, siehe mapping_planner.py/gate_planner.py) legt die
+        # Abbiege-Richtung an jeder Kreuzung vorab fest -- ersetzt die vormals zufaellige Wahl
+        # anhand des Kreuzungstyp-Tags.
+        # latch=True: Subscriber, die erst nach dem Start verbinden (z.B. mapping_recorder_node,
+        # dashboard_node), bekommen den zuletzt veroeffentlichten Wert trotzdem sofort.
+        # current_edge: Kanten-ID (fuer mapping_recorder_node -- Tag-Zuordnung braucht nur
+        #   "welche Kante JETZT", keine Mehrdeutigkeit in Echtzeit).
+        # current_step: roher Plan-Index (fuer's Dashboard -- current_edge allein reicht dort
+        #   nicht, weil dieselbe Kante mehrfach im Plan vorkommen kann, z.B. beim Mapping-
+        #   Backtracking, und "welcher Schritt" dann aus der Kanten-ID nicht eindeutig waere).
+        self.pub_current_edge = rospy.Publisher(f'/{self._vehicle_name}/switch/current_edge', Int32, queue_size=1, latch=True)
+        self.pub_current_step = rospy.Publisher(f'/{self._vehicle_name}/switch/current_step', Int32, queue_size=1, latch=True)
+        plan_path = rospy.get_param('~plan_path', os.path.join(os.path.dirname(__file__), '..', 'config', 'plan.json'))
+        self._plan_state = PlanState(load_plan(plan_path))
+        self._publish_plan_progress()
 
         self.intersection_finished = False
         self.sub_intersection_finished = rospy.Subscriber(f'/{self._vehicle_name}/switch/intersection_finished', Bool, self.cbIntersectionFinished, queue_size=1)
@@ -75,11 +89,19 @@ class SwitchControlNode:
         print('received message')
         # Write your own code her
 
+    def _publish_plan_progress(self):
+        hop = self._plan_state.current_hop
+        self.pub_current_edge.publish(Int32(data=hop.edge_id if hop is not None else -1))
+        self.pub_current_step.publish(Int32(data=self._plan_state.step))
+
     def cbIntersectionFinished(self, msg):
         self.intersection_finished = msg.data
         if self.intersection_finished:
             self._control_mode = ControlType.Lane
             self.intersection_finished = False
+            # Abbiegung laut Plan ausgefuehrt -> einen Schritt weiter im Plan.
+            self._plan_state.advance()
+            self._publish_plan_progress()
             # Jetzt erst den Cooldown starten: ab hier fährt er von der Kreuzung weg.
             # Der Timer muss nur noch das Wegfahren von der roten Linie abdecken.
             self._intersection_cooldown_start = rospy.Time.now()
@@ -88,6 +110,8 @@ class SwitchControlNode:
         """
         ROS-Callback, wird aufgerufen wenn detect_intersection_node einen neuen Wert publiziert.
         Wechselt in den Stop-Modus wenn eine Kreuzung erkannt wird, wartet und fährt dann weiter.
+        Die Abbiege-Richtung kommt nicht mehr zufaellig vom Kreuzungstyp-Tag, sondern aus dem
+        vorab berechneten Plan (siehe mapping_planner.py/gate_planner.py).
 
         Autor: Felix Faass
 
@@ -97,20 +121,33 @@ class SwitchControlNode:
         if self.intersection_running:
             return
 
-        if msg.data and self._control_mode == ControlType.Lane:
-            self.intersection_running = True
-            # Cooldown startet NICHT hier, sondern erst nach dem Abbiegen (cbIntersectionFinished),
-            # damit Ausrichten/Abbiegen beliebig lang dauern dürfen, ohne dass er erneut triggert.
-            self._intersection_cooldown_start = None
-            # Während der ohnehin vorhandenen Stop-Wartezeit gleich ausrichten,
-            # statt nur stillzustehen. Kostet keine zusätzliche Zeit.
-            self._control_mode = ControlType.Align
-            self._aligned = False
-            rospy.loginfo(f"Intersection detected! Aligning (min {self.intersection_wait_time}s, max {self.intersection_align_max_time}s)...")
-            self._state_start_time = rospy.Time.now()
-            self._waiting_on_intersection = True
-            self.pub_chosen_direction.publish(self._chosen_direction.value)
+        if not (msg.data and self._control_mode == ControlType.Lane):
+            return
 
+        self.intersection_running = True
+        # Cooldown startet NICHT hier, sondern erst nach dem Abbiegen (cbIntersectionFinished),
+        # damit Ausrichten/Abbiegen beliebig lang dauern dürfen, ohne dass er erneut triggert.
+        self._intersection_cooldown_start = None
+
+        # Letzter Streckenabschnitt des Plans beendet -> Ziel erreicht, keine weitere
+        # Abbiegung vorgesehen. Einfach stoppen statt in Align/Intersection weiterzumachen.
+        if self._plan_state.step >= len(self._plan_state.plan) - 1:
+            rospy.loginfo("Plan abgeschlossen -- Ziel erreicht, stoppe.")
+            self._control_mode = ControlType.Stop
+            self._plan_state.advance()
+            self._publish_plan_progress()
+            return
+
+        # Während der ohnehin vorhandenen Stop-Wartezeit gleich ausrichten,
+        # statt nur stillzustehen. Kostet keine zusätzliche Zeit.
+        self._control_mode = ControlType.Align
+        self._aligned = False
+        direction = self._plan_state.next_direction()
+        rospy.loginfo(f"Intersection detected! Plan-Richtung: {direction}. "
+                      f"Aligning (min {self.intersection_wait_time}s, max {self.intersection_align_max_time}s)...")
+        self._state_start_time = rospy.Time.now()
+        self._waiting_on_intersection = True
+        self.pub_chosen_direction.publish(direction.value)
 
     def cbAlignFinished(self, msg):
         """
@@ -121,17 +158,6 @@ class SwitchControlNode:
         """
         if msg.data:
             self._aligned = True
-
-    def cbChooseDirection(self, msg):
-        tag_id = msg.data
-        if tag_id == 1:       #┼
-            self._chosen_direction = IntersectionsDirections(random.randint(0, 2))
-        elif tag_id == 3:     #┤
-            self._chosen_direction = IntersectionsDirections(random.randint(0, 1))
-        elif tag_id == 4:     #├
-            self._chosen_direction = IntersectionsDirections(random.randint(1, 2))
-        elif tag_id == 2:     #┴
-            self._chosen_direction = IntersectionsDirections(random.choice([0, 2]))
 
     def run(self):
         rate = rospy.Rate(10)

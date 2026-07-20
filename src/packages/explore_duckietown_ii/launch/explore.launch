@@ -1,12 +1,36 @@
 <launch>
   <arg name="veh" default="$(env VEHICLE_NAME)" />
 
+  <!-- "mapping": zusaetzlich mapping_recorder_node, ordnet Tor-Tags den Kanten zu und
+       schreibt mapped_map.json. "gate": normaler Torlauf, kein Recorder (Tags schon
+       bekannt). Default bewusst "gate", damit ein versehentlicher Start ohne
+       run_mode Angabe kein bereits bestehendes mapped_map.json ueberschreibt. -->
+  <arg name="run_mode" default="gate" />
+  <arg name="plan_path" default="$(find explore_duckietown_ii)/config/plan.json" />
+  <!-- map_path: waehrend des Mapping-Laufs known_map.json (Tags noch nicht gesetzt),
+       waehrend des Torlaufs mapped_map.json (Tags vom Mapping-Lauf uebernommen). -->
+  <arg name="map_path" default="$(find explore_duckietown_ii)/config/known_map.json" />
+  <arg name="run_label" default="" />
+
   <node pkg="explore_duckietown_ii" type="configuration_node.py"     name="configuration_node"     output="screen" />
   <node pkg="explore_duckietown_ii" type="detect_lane_node.py"       name="detect_lane_node"       output="screen" />
   <node pkg="explore_duckietown_ii" type="detect_intersection_node.py" name="detect_intersection_node" output="screen" />
-  <node pkg="explore_duckietown_ii" type="switch_control_node.py"    name="switch_control_node"    output="screen" />
+
+  <node pkg="explore_duckietown_ii" type="switch_control_node.py"    name="switch_control_node"    output="screen">
+    <param name="plan_path" value="$(arg plan_path)" />
+  </node>
+
   <node pkg="explore_duckietown_ii" type="detect_apriltag_node.py"   name="detect_apriltag_node"   output="screen" />
   <node pkg="explore_duckietown_ii" type="detect_duckies_node.py"    name="detect_duckies_node"    output="screen" />
   <node pkg="explore_duckietown_ii" type="debug_view_node.py"        name="debug_view_node"        output="screen" />
   <node pkg="explore_duckietown_ii" type="control_lane_node.py"      name="control_lane_node"      output="screen" />
+
+  <node pkg="explore_duckietown_ii" type="mapping_recorder_node.py"  name="mapping_recorder_node"  output="screen"
+        if="$(eval run_mode == 'mapping')" />
+
+  <node pkg="explore_duckietown_ii" type="dashboard_node.py"         name="dashboard_node"         output="screen">
+    <param name="map_path" value="$(arg map_path)" />
+    <param name="plan_path" value="$(arg plan_path)" />
+    <param name="run_label" value="$(arg run_label)" />
+  </node>
 </launch>
