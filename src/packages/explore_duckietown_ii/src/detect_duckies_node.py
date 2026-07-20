@@ -204,6 +204,10 @@ class DetectDuckiesNode:
         # Sperrzone: ab dieser Bildzeile (y2 der Ente) ist sie zu nah fuers PID-Ausweichen
         # -> Pivot. Kleiner = Zone beginnt weiter oben = frueher pivotieren.
         self._blocked_zone_top = int(parameters["detection"]["blocked_zone_top"]["default"])
+        # Ab so vielen Linien-Pixeln im Fahrband gilt eine Linie als "quer im Weg".
+        self._line_min_px = int(parameters["detection"]["line_min_px"]["default"])
+        # Wie weit von so einer Linie weggelenkt wird, als Anteil der Spurbreite.
+        self._line_push = parameters["detection"]["line_push"]["default"]
     
 
     def crop_img(self, img):
@@ -391,11 +395,14 @@ class DetectDuckiesNode:
                             self.pub_duckie_error.publish(Float64(data=duckie_error))
                             self.pub_duckie_blocked.publish(Bool(data=blocked))
                             if blocked:
-                                # kein Durchkommen -> Drehrichtung mitgeben. threats mitgeben,
-                                # damit ohne gueltige Linien wenigstens VON DER ENTE weg
-                                # gedreht wird statt blind in den Prior.
-                                self.pub_duckie_pivot_dir.publish(
-                                    Int32(data=self._pivot_direction(threats)))
+                                # kein Durchkommen -> Drehrichtung mitgeben. Loeste eine
+                                # quer liegende LINIE den Pivot aus, gilt deren Richtung
+                                # (weg von ihr); sonst weg von der naeheren Linie bzw. von
+                                # der Ente (threats).
+                                ld, lclose = self._line_in_path()
+                                self.pub_duckie_pivot_dir.publish(Int32(
+                                    data=ld if (lclose and ld != 0)
+                                    else self._pivot_direction(threats)))
                             self.pub_duckie_control_active.publish(Bool(data=True))
                         elif self.duckie_only:
                             # freie Bahn, aber wir bleiben im Enten-Modus -> selbst Spur fahren
@@ -566,6 +573,57 @@ class DetectDuckiesNode:
         self.center_white, self.white_valid = self._smooth_line('white', raw_white, white_alternative)
         self.center_yellow, self.yellow_valid = self._smooth_line('yellow', raw_yellow, yellow_alternative)
 
+    def _count_band(self, mask, y_from, y_to, step=4):
+        """Zaehlt Maskenpixel innerhalb des Fahrbands zwischen zwei Bildzeilen."""
+        if mask is None:
+            return 0
+        h, w = mask.shape[:2]
+        pc = self._path_center()
+        n = 0
+        for y in range(max(0, int(y_from)), min(h, int(y_to)), step):
+            half = self._lane_px(y) / 2.0
+            a = max(0, int(pc - half))
+            b = min(w, int(pc + half))
+            if b > a:
+                n += int(np.count_nonzero(mask[y, a:b]))
+        return n
+
+    def _line_in_path(self):
+        """Liegt LINIENFARBE im Fahrband? Faengt den Fall ab, dass der Bot senkrecht auf
+        eine Linie zufaehrt: get_x_for_driving nutzt Sobel in x-Richtung und sieht deshalb
+        nur SENKRECHTE Kanten - eine quer liegende Linie ist dafuer unsichtbar (isoliert
+        getestet: 0 von 100 Zeilen). Der Bot faehrt dann einfach drueber. Farbe im Band zu
+        zaehlen ist dagegen orientierungsunabhaengig.
+
+        Rueckgabe (richtung, nah):
+          richtung: +1 = nach links lenken (weisse Linie im Weg), -1 = nach rechts (gelbe),
+                    0 = frei. Also immer WEG von der Linie.
+          nah:      True, wenn die Linie in der Sperrzone liegt -> Pivot statt lenken.
+
+        Autor: Felix Faass
+        """
+        my, mw = self.debug_mask_yellow, self.debug_mask_white
+        if my is None or mw is None:
+            return 0, False
+        y0, zt, y1 = int(self._ref_y0), int(self._blocked_zone_top), int(self._ref_y1)
+
+        # nah (Sperrzone) -> Pivot
+        yc, wc = self._count_band(my, zt, y1), self._count_band(mw, zt, y1)
+        if max(yc, wc) >= self._line_min_px:
+            return (-1 if yc >= wc else 1), True
+        # weiter vorne -> nur gegenlenken
+        yf, wf = self._count_band(my, y0, zt), self._count_band(mw, y0, zt)
+        if max(yf, wf) >= self._line_min_px:
+            return (-1 if yf >= wf else 1), False
+        return 0, False
+
+    def _push_from_line(self, target, row):
+        """Schiebt ein Fahrziel von einer quer im Fahrband liegenden Linie weg."""
+        d, _ = self._line_in_path()
+        if d == 0:
+            return target
+        return target - d * self._line_push * self._lane_px(row)
+
     def _lane_center(self, row):
         """Fahrlinie (Bild-x) an Zeile row, ohne sich auf einen Fallback zu verlassen.
 
@@ -641,7 +699,22 @@ class DetectDuckiesNode:
         row = self.debug_lane_row
         if row is None:
             row = int((self._ref_y0 + self._ref_y1) / 2)
+        # Linie quer im Fahrband und zu nah -> Pivot, auch ohne Ente im Bild.
+        line_dir, line_close = self._line_in_path()
+        if line_close:
+            self.pub_duckie_error.publish(Float64(data=0.0))
+            self.pub_duckie_blocked.publish(Bool(data=True))
+            self.pub_duckie_pivot_dir.publish(Int32(data=line_dir))
+            self.pub_duckie_control_active.publish(Bool(data=True))
+            self.debug_duckie_error = 0.0
+            self.debug_largest_gap = None
+            self.debug_blocked = True
+            return
+
         lane_center = self._lane_center(int(row))
+        if lane_center is not None:
+            # quer liegende Linie im Fahrband -> von ihr wegschieben
+            lane_center = self._push_from_line(lane_center, int(row))
         err = 0.0 if lane_center is None else self._norm_err(lane_center)
         self.pub_duckie_error.publish(Float64(data=err))
         self.pub_duckie_blocked.publish(Bool(data=False))
@@ -752,13 +825,14 @@ class DetectDuckiesNode:
         die breiteste Luecke und zielt in ihre MITTE (max. Abstand zu Ente UND Linie
         -> Bot passt durch, ohne dass wir die Bot-Breite kennen). Rueckgabe: (error, stop).
           - keine Linien / keine Ente im Korridor -> (None, False): kein Ausweichen.
-          - Ente(n) im Weg, Bot passt durch -> (error, False): mittig durch die
-            breiteste PASSIERBARE Luecke.
-          - keine Luecke, durch die der Bot passt -> (error, True): Pivot noetig.
-        "Passt der Bot durch" = Luecke >= Spurbreite(row) (1:1, s. Kalibrierung). Spurbreite
-        kommt aus der statischen Referenz und ist der Bot-Breiten-Massstab dieser Zeile
-        -> beides px in derselben Zeile, Perspektive kuerzt sich weg, keine Kalibrierung.
-        Der Fehler ist in Spurbreiten normiert (siehe unten).
+          - Ente(n) im Weg -> (error, False): mittig durch die breiteste Luecke,
+            bevorzugt eine, durch die der Bot passt.
+          - Ente im Fahrband UND in der SPERRZONE (nah) -> (0.0, True): Pivot.
+
+        PIVOT HAT GENAU EINEN AUSLOESER: die Sperrzone (Ente nah + im Fahrband). Der
+        Fit-Check ("passt der Bot durch die Luecke?", Luecke >= Spurbreite(row)) waehlt nur
+        noch die Luecke AUS und loest keinen Pivot mehr aus - sonst pivotierte der Bot schon
+        wegen weit entfernter Enten, weil der Korridor am Horizont perspektivisch schmal ist.
 
         Autor: Felix Faass
         """
@@ -769,10 +843,22 @@ class DetectDuckiesNode:
         in_path_ducks = [d for d in active_duckies if self._duck_in_path(d)]
         in_path = bool(in_path_ducks)
 
-        # SPERRZONE: Ente im Fahrweg UND so nah (y2 unterhalb _blocked_zone_top), dass ein
-        # PID-Ausweichbogen nicht mehr reicht - er wuerde nur noch anschneiden. Also das
-        # Regler-Manoever abbrechen und stattdessen auf der Stelle drehen (Pivot).
+        # SPERRZONE = DER EINZIGE PIVOT-AUSLOESER. Ente im Fahrweg UND so nah (y2 unterhalb
+        # _blocked_zone_top), dass ein PID-Ausweichbogen nicht mehr reicht -> Manoever
+        # abbrechen und auf der Stelle drehen.
+        #
+        # Bewusst NUR hier: frueher loeste auch der Fit-Check ("keine Luecke >= Bot-Breite")
+        # einen Pivot aus, und zwar bei JEDER Distanz. Am Horizont ist der Korridor
+        # perspektivisch schmal, eine volle Bot-Breite passt dort fast nie rein -> "no fit"
+        # schon bei weit entfernten Enten, obwohl beim Naeherkommen laengst Platz ist.
+        # Zwei widersprechende Logiken. Jetzt gilt: Pivot <=> Ente im Fahrband UND nah.
         if any(d[3] >= self._blocked_zone_top for d in in_path_ducks):
+            self.debug_largest_gap = None
+            return 0.0, True
+
+        # LINIE QUER IM FAHRWEG, zu nah zum Ausweichen -> ebenfalls Pivot (zweistufig wie
+        # bei Enten: weiter vorne wird nur gegengelenkt, s. _push_from_line).
+        if self._line_in_path()[1]:
             self.debug_largest_gap = None
             return 0.0, True
 
@@ -781,14 +867,11 @@ class DetectDuckiesNode:
                     and (self.white_valid or self.yellow_valid))
 
         if not lines_ok:
+            # Ohne echte Linien keine Luecken-Rechnung moeglich. Die Ente ist hier
+            # zwangslaeufig NICHT in der Sperrzone (sonst waeren wir oben raus), also noch
+            # weit weg -> kein Pivot, einfach weiterfahren. Kommt sie naeher, greift die
+            # Sperrzone.
             self.debug_largest_gap = None
-            if in_path:
-                # Ente steht im Weg, aber ohne echte Linien laesst sich keine Luecke
-                # rechnen. NICHT ignorieren (sonst faehrt er drueber!) -> Pivot. Die
-                # Richtung kommt aus _pivot_direction(), das ohne gueltige Linien den
-                # Strecken-Prior nimmt. Lieber gedreht als drueber.
-                return 0.0, True
-            # keine Ente im Weg und keine Linien -> nichts zu tun, nichts erfinden
             return None, False
 
         # Fahrkorridor: gelb (links) .. weiss (rechts). Defensiv sortieren.
@@ -819,6 +902,7 @@ class DetectDuckiesNode:
             lane_center = self._lane_center(row)
             if lane_center is None:
                 lane_center = (left + right) / 2.0   # gar keine Linien -> Korridormitte
+            lane_center = self._push_from_line(lane_center, row)
             self.debug_largest_gap = lane_center
             self.debug_close_to_white = False
             return self._norm_err(lane_center), False
@@ -835,18 +919,23 @@ class DetectDuckiesNode:
             gaps.append((cursor, right))
 
         if not gaps:
-            # Korridor komplett zu -> definitiv kein Durchkommen -> Pivot.
+            # Korridor an dieser Zeile komplett zu. KEIN Pivot: die Ente ist hier noch
+            # nicht in der Sperrzone, und am Horizont ist der Korridor ohnehin schmal ->
+            # meist ein Perspektiv-Artefakt. Auf die Korridormitte zielen und weiterfahren;
+            # bleibt es dabei, greift beim Naeherkommen die Sperrzone.
             target = (left + right) / 2.0
             self.debug_largest_gap = target
             self.debug_close_to_white = False
-            return self._norm_err(target), True
+            return self._norm_err(target), False
 
-        # FIT-CHECK gegen die statische Spur-Referenz: passt der Bot (mit Toleranz)
-        # ueberhaupt durch eine der Luecken? Beides in px in DERSELBEN Zeile -> der
-        # Perspektiv-Massstab kuerzt sich weg -> keine Kalibrierung noetig.
+        # FIT-CHECK: durch welche Luecken passt der Bot? Luecke und Spurbreite in DERSELBEN
+        # Zeile -> Perspektive kuerzt sich weg, keine Kalibrierung noetig.
+        # Dient NUR der Luecken-AUSWAHL, loest KEINEN Pivot aus (s. Sperrzone oben): auf
+        # Distanz ist "passt nicht" eine Vorhersage ueber eine Lage, die sich beim
+        # Naeherkommen komplett aendert - und am Horizont ist die Messung am unsichersten.
         need = self._lane_px(row)
         passable = [g for g in gaps if (g[1] - g[0]) >= need]
-        pivot_needed = not passable
+        pivot_needed = False
 
         # Ziel = Mitte der breitesten PASSIERBAREN Luecke - aber mit TIEFEN-VETO: die
         # breiteste Luecke, deren Ziel keine Ente in einer anderen Tiefe trifft. Trifft
@@ -911,6 +1000,13 @@ class DetectDuckiesNode:
             cv2.line(img, (0, zt), (img.shape[1], zt), (255, 0, 255), 2)
             cv2.putText(img, "SPERRZONE", (8, zt + 20),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 255), 1)
+
+            # Linie quer im Fahrband? (zeigt Auslöser + Richtung)
+            ld, lclose = self._line_in_path()
+            if ld != 0:
+                cv2.putText(img, "LINIE QUER -> %s%s" % ("LINKS" if ld > 0 else "RECHTS",
+                                                         " (PIVOT)" if lclose else ""),
+                            (8, zt - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 255), 2)
 
             for y in range(y0 + 5, y1, 12):
                 left, right = xl(y), xr(y)

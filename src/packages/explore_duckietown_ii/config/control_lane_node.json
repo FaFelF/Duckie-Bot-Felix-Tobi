@@ -25,10 +25,10 @@
         "stable_count":  {"default": 2,    "min": 1,    "max": 20}
     },
     "pid_duckie":{
-        "p": {"default": 5.5, "min": 0.0, "max": 10.0},
+        "p": {"default": 3.0, "min": 0.0, "max": 10.0},
         "i": {"default": 0.12, "min": 0.0, "max": 10.0},
-        "d": {"default": 2.0, "min": 0.0, "max": 10.0},
-        "max_vel": {"default": 0.20, "min": 0.0, "max": 10.0},
+        "d": {"default": 1.5, "min": 0.0, "max": 10.0},
+        "max_vel": {"default": 0.10, "min": 0.0, "max": 10.0},
         "min_vel": {"default": 0.05, "min": 0.0, "max": 10.0},
         "brake_gain": {"default": 0.85, "min": 0.0, "max": 10.0},
         "pivot_omega": {"default": 2.5, "min": 0.0, "max": 8.0},

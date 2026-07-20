@@ -43,7 +43,9 @@
         "pass_side_min_factor": {"default": 0.5, "min": 0.0, "max": 1.0},
         "lane_roi_top": {"default": 150, "min": 0, "max": 479},
         "avoid_gain": {"default": 0.6, "min": 0.0, "max": 1.0},
-        "blocked_zone_top": {"default": 340, "min": 0, "max": 479}
+        "blocked_zone_top": {"default": 340, "min": 0, "max": 479},
+        "line_min_px": {"default": 400, "min": 0, "max": 20000},
+        "line_push": {"default": 0.5, "min": 0.0, "max": 2.0}
     }
 }
 }
