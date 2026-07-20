@@ -70,6 +70,7 @@ class DetectDuckiesNode:
         self.debug_lowest_duckie = None
         self.debug_close_to_white = False
         self.debug_blocked = False
+        self.debug_pivot_dir = 0   # +1 = links, -1 = rechts (fuer die Anzeige)
         # Masken-Debugfenster: die in fnDetectLane wirklich benutzten Masken + Suchzeile
         self.debug_mask_yellow = None
         self.debug_mask_white = None
@@ -400,9 +401,10 @@ class DetectDuckiesNode:
                                 # (weg von ihr); sonst weg von der naeheren Linie bzw. von
                                 # der Ente (threats).
                                 ld, lclose = self._line_in_path()
-                                self.pub_duckie_pivot_dir.publish(Int32(
-                                    data=ld if (lclose and ld != 0)
-                                    else self._pivot_direction(threats)))
+                                pdir = (ld if (lclose and ld != 0)
+                                        else self._pivot_direction(threats))
+                                self.debug_pivot_dir = pdir
+                                self.pub_duckie_pivot_dir.publish(Int32(data=pdir))
                             self.pub_duckie_control_active.publish(Bool(data=True))
                         elif self.duckie_only:
                             # freie Bahn, aber wir bleiben im Enten-Modus -> selbst Spur fahren
@@ -709,6 +711,7 @@ class DetectDuckiesNode:
             self.debug_duckie_error = 0.0
             self.debug_largest_gap = None
             self.debug_blocked = True
+            self.debug_pivot_dir = line_dir
             return
 
         lane_center = self._lane_center(int(row))
@@ -778,7 +781,21 @@ class DetectDuckiesNode:
         return False
 
     def _pivot_direction(self, ducks_in_path=None):
-        """Drehrichtung fuer den Pivot (+1 = links, -1 = rechts), in dieser Reihenfolge:
+        """Drehrichtung fuer den Pivot. Grundregel: IMMER WEG von dem, was im Weg ist.
+
+        VORZEICHEN (wie ueberall im Projekt, vgl. Abbiegen an der Kreuzung:
+        links = omega +1.2, rechts = omega -2.5):
+            +1  ->  omega positiv  ->  dreht nach LINKS
+            -1  ->  omega negativ  ->  dreht nach RECHTS
+
+        Damit konkret:
+            weisse Linie rechts naeher  -> +1 -> nach LINKS  (weg von weiss)
+            gelbe  Linie links  naeher  -> -1 -> nach RECHTS (weg von gelb)
+            Ente links im Weg           -> -1 -> nach RECHTS (weg von der Ente)
+            Ente rechts im Weg          -> +1 -> nach LINKS
+        Gleiche Konvention wie beim normalen Ausweichen (error = Bildmitte - Ziel).
+
+        Reihenfolge der Kriterien:
 
         1. Linien verlaesslich -> WEG von der naeheren Linie (dort ist mehr Platz).
         2. Sonst, wenn Enten im Weg bekannt -> WEG von der Ente. Ohne Linien wissen wir
@@ -794,15 +811,17 @@ class DetectDuckiesNode:
         if lines_ok:
             d_yellow = abs(self.image_middle - self.center_yellow)
             d_white = abs(self.image_middle - self.center_white)
+            # weiss naeher -> +1 = LINKS (weg von weiss); sonst -1 = RECHTS (weg von gelb)
             return 1 if d_white < d_yellow else -1
 
         if ducks_in_path:
-            # naechste (unterste) Ente im Weg -> von ihr wegdrehen
+            # naechste (unterste) Ente im Weg -> von ihr wegdrehen:
+            # Ente links vom Fahrweg -> -1 = RECHTS, Ente rechts -> +1 = LINKS
             nearest = max(ducks_in_path, key=lambda d: d[3])
             duck_cx = (nearest[0] + nearest[2]) / 2.0
             return -1 if duck_cx < self._path_center() else 1
 
-        return 1
+        return 1   # Strecken-Prior: kurvt immer links -> +1 = LINKS
 
     def _lane_px(self, y):
         """Spur-Innenbreite in px an Bildzeile y, aus der statischen Referenz.
@@ -1178,7 +1197,12 @@ class DetectDuckiesNode:
                         cv2.putText(img, f"Error: {self.debug_duckie_error:.3f}",
                                     (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
                     if self.debug_blocked:
-                        cv2.putText(img, "NO FIT - PIVOT", (10, 60),
+                        # Richtung mit anzeigen: +1 = links, -1 = rechts (immer WEG von dem,
+                        # was im Weg ist). Ohne die Angabe sieht man beim Fahren nicht, ob er
+                        # sich richtig herum dreht.
+                        d = self.debug_pivot_dir
+                        arrow = "<< LINKS" if d > 0 else (">> RECHTS" if d < 0 else "?")
+                        cv2.putText(img, f"PIVOT {arrow}", (10, 60),
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
 
                 # Debug: statische Spur-Referenz nutzen und einzeichnen, wo der Bot

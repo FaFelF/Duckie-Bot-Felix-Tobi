@@ -247,6 +247,13 @@ class ControlLaneNode:
                 self._wiggle_dir *= -1.0
                 self._wiggle_time = now
             self.v = self.wiggle_v * self._wiggle_dir
+            # Drehrichtung kommt als +1/-1 von detect_duckies (_pivot_direction) und meint
+            # immer WEG von dem, was im Weg ist. Vorzeichen wie beim Abbiegen an der
+            # Kreuzung (links = omega +1.2, rechts = omega -2.5):
+            #   duckie_pivot_dir = +1 -> omega positiv -> dreht nach LINKS
+            #                            (weisse Linie oder Ente rechts im Weg)
+            #   duckie_pivot_dir = -1 -> omega negativ -> dreht nach RECHTS
+            #                            (gelbe Linie oder Ente links im Weg)
             self.a = self.pivot_omega * self.duckie_pivot_dir
             self.integral = 0.0
             self.lastError = 0.0
