@@ -120,13 +120,20 @@ class DetectAprilTagNode:
                     detection.tag_id = tag.tag_id
                     tag_detections.detections.append(detection)
 
-                largest = max(tags, key=lambda t: (t.corners[:,0].max() - t.corners[:,0].min()) *
-                                                   (t.corners[:,1].max() - t.corners[:,1].min()))
-                self.pub_apriltag.publish(largest.tag_id)
-
-                # Peak aktualisieren: nur sicher dekodierte Tags (hamming==0), das größte davon.
-                # Ist es größer als der bisherige Peak -> als bestes Schild der Anfahrt merken.
+                # NUR sicher dekodierte Tags veroeffentlichen (hamming == 0). hamming > 0
+                # heisst, der Decoder musste Bitfehler korrigieren -- dabei entstehen
+                # verwechselte IDs (z.B. 8 statt 10, wenige Bits Unterschied). Das Mapping
+                # zaehlt diese Sichtungen ab und uebernimmt bei Mehrheit den falschen Tag.
                 confident = [t for t in tags if t.hamming == 0]
+                if confident:
+                    largest = max(confident, key=lambda t: (t.corners[:,0].max() - t.corners[:,0].min()) *
+                                                            (t.corners[:,1].max() - t.corners[:,1].min()))
+                    self.pub_apriltag.publish(largest.tag_id)
+                else:
+                    self.pub_apriltag.publish(-1)
+
+                # Peak aktualisieren: das groesste sicher dekodierte Tag.
+                # Ist es größer als der bisherige Peak -> als bestes Schild der Anfahrt merken.
                 if confident:
                     best = max(confident, key=lambda t: (t.corners[:,0].max() - t.corners[:,0].min()) *
                                                         (t.corners[:,1].max() - t.corners[:,1].min()))

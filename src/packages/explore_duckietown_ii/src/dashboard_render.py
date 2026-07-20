@@ -9,6 +9,7 @@ Zeigt in einem Bild:
   c) die aktuelle Position (aktueller Hop, falls step gegeben).
 """
 
+import math
 from typing import Dict, List, Optional, Tuple
 
 import cv2
@@ -19,7 +20,7 @@ from graph import Direction, Graph, Hop, relative_direction
 MAP_SIZE = 700
 PANEL_WIDTH = 300
 MARGIN = 0.82
-PARALLEL_EDGE_STEP = 22  # Pixelabstand zwischen parallelen Kanten (z.B. direkte Verbindung + Bogen)
+PARALLEL_EDGE_STEP = 64  # Pixelabstand zwischen parallelen Kanten (z.B. direkte Verbindung + Bogen)
 
 
 def to_pixel(pos: Tuple[float, float]) -> Tuple[int, int]:
@@ -54,23 +55,133 @@ def _edge_offset(edge_id: int, edge_groups: Dict[frozenset, List[int]]) -> float
     return 0.0
 
 
-def _draw_edge(canvas, edge, layout, edge_groups, color, thickness):
+# Farbrollen (BGR). Bewusst wenige, feste Rollen statt bunter Kanten: die Farbe sagt
+# WAS die Kante gerade ist, nicht welche Nummer sie hat.
+COL_SURFACE      = (32, 30, 28)
+COL_EDGE_OTHER   = (95, 92, 88)     # nicht im Plan -> zuruecknehmen
+COL_EDGE_PATH    = (190, 130, 55)   # im Plan
+COL_EDGE_CURRENT = (60, 200, 255)   # gerade befahren
+COL_NODE         = (70, 66, 62)
+COL_NODE_CURRENT = (60, 200, 255)
+COL_TEXT         = (238, 238, 238)
+COL_TEXT_MUTED   = (155, 152, 148)
+COL_EXIT         = (150, 210, 120)  # Ausgangsnummern
+COL_GATE         = (120, 255, 255)  # Tor-Tags
+FONT = cv2.FONT_HERSHEY_SIMPLEX
+
+
+def _chip(canvas, text, center, fg, scale=0.42, pad=4):
+    """Text mit dunklem Kaestchen dahinter -- sonst ist er auf einer Kante unlesbar."""
+    (tw, th), _ = cv2.getTextSize(text, FONT, scale, 1)
+    x, y = int(center[0] - tw / 2), int(center[1] + th / 2)
+    cv2.rectangle(canvas, (x - pad, y - th - pad), (x + tw + pad, y + pad), COL_SURFACE, -1)
+    cv2.putText(canvas, text, (x, y), FONT, scale, fg, 1, cv2.LINE_AA)
+
+
+def _edge_points(edge, layout, edge_groups):
+    """Polylinie der Kante von node_a nach node_b (gerade oder Bogen bei Parallelkanten)."""
     p1 = to_pixel(layout[edge.node_a])
     p2 = to_pixel(layout[edge.node_b])
     offset = _edge_offset(edge.id, edge_groups)
     if abs(offset) < 1e-6:
-        cv2.line(canvas, p1, p2, color, thickness)
-        mid = ((p1[0] + p2[0]) // 2, (p1[1] + p2[1]) // 2)
-    else:
-        dx, dy = p2[0] - p1[0], p2[1] - p1[1]
-        length = max((dx ** 2 + dy ** 2) ** 0.5, 1e-6)
-        perp = (-dy / length, dx / length)
-        mid_x, mid_y = (p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2
-        control = (mid_x + perp[0] * offset, mid_y + perp[1] * offset)
-        pts = bezier_points(p1, p2, control)
-        cv2.polylines(canvas, [pts], isClosed=False, color=color, thickness=thickness)
-        mid = tuple(int(c) for c in pts[len(pts) // 2])
-    return mid
+        return np.array([p1, p2], dtype=np.int32)
+    dx, dy = p2[0] - p1[0], p2[1] - p1[1]
+    length = max((dx ** 2 + dy ** 2) ** 0.5, 1e-6)
+    perp = (-dy / length, dx / length)
+    control = ((p1[0] + p2[0]) / 2 + perp[0] * offset, (p1[1] + p2[1]) / 2 + perp[1] * offset)
+    return bezier_points(p1, p2, control, num=32)
+
+
+def _draw_edge(canvas, edge, layout, edge_groups, color, thickness):
+    pts = _edge_points(edge, layout, edge_groups)
+    cv2.polylines(canvas, [pts], isClosed=False, color=color, thickness=thickness,
+                  lineType=cv2.LINE_AA)
+    return tuple(int(c) for c in pts[len(pts) // 2])
+
+
+def _point_along(pts, dist):
+    """Punkt in `dist` Pixeln Bogenlaenge entlang der Polylinie -- mit Interpolation
+    INNERHALB der Segmente. Nur die Stuetzpunkte abzulaufen reicht nicht: eine gerade
+    Kante hat nur zwei davon, da landet man sofort am anderen Ende."""
+    acc = 0.0
+    for a, b in zip(pts[:-1], pts[1:]):
+        seg = float(np.hypot(float(b[0]) - float(a[0]), float(b[1]) - float(a[1])))
+        if seg < 1e-6:
+            continue
+        if acc + seg >= dist:
+            t = (dist - acc) / seg
+            return int(a[0] + t * (b[0] - a[0])), int(a[1] + t * (b[1] - a[1]))
+        acc += seg
+    return int(pts[-1][0]), int(pts[-1][1])
+
+
+def _departure_point(edge, node_id, layout, edge_groups, dist=52):
+    """
+    Punkt kurz hinter dem Knoten IN Fahrtrichtung dieser Kante -- dorthin kommt die
+    Ausgangsnummer. Ueber die echte Polylinie, damit die Nummer bei gebogenen
+    Parallelkanten auch wirklich am richtigen Ast steht.
+    """
+    pts = _edge_points(edge, layout, edge_groups).astype(float)
+    if node_id == edge.node_b:
+        pts = pts[::-1]
+    return _point_along(pts, dist)
+
+
+def _label_point(edge, layout, edge_groups, shift=16):
+    """Mittelpunkt der Kante, SENKRECHT nach aussen versetzt. Die Richtung folgt dem
+    Bogen-Offset der Kante -- sonst wandern die Labels zweier Parallelkanten beide in
+    dieselbe Richtung und ruecken wieder zusammen, statt sich zu trennen."""
+    pts = _edge_points(edge, layout, edge_groups).astype(float)
+    total = float(sum(np.hypot(b[0] - a[0], b[1] - a[1]) for a, b in zip(pts[:-1], pts[1:])))
+    mx, my = _point_along(pts, total / 2)
+    ax, ay = _point_along(pts, max(0.0, total / 2 - 12))
+    bx, by = _point_along(pts, min(total, total / 2 + 12))
+    dx, dy = bx - ax, by - ay
+    n = max((dx * dx + dy * dy) ** 0.5, 1e-6)
+    offset = _edge_offset(edge.id, edge_groups)
+    s = shift if offset == 0 else math.copysign(shift, offset)
+    return int(mx - dy / n * s), int(my + dx / n * s)
+
+
+def _exit_label_positions(graph, node_id, layout, edge_groups,
+                           radius=64, min_sep_deg=36):
+    """
+    Positionen der Ausgangsnummern rund um eine Kreuzung.
+
+    Nicht einfach ein Punkt auf der Kante: Parallelkanten starten am Knoten praktisch
+    gleich und trennen sich erst in der Mitte -- die Nummern lagen dadurch uebereinander.
+    Stattdessen der WINKEL der Abfahrtsrichtung, auf einem Kreis um den Knoten, und
+    Winkel, die zu dicht beieinander liegen, werden auseinandergeschoben.
+    """
+    p0 = to_pixel(layout[node_id])
+    items = []
+    for exit_no, edge_id in sorted(graph.nodes[node_id].exits.items()):
+        if edge_id is None:
+            continue
+        dp = _departure_point(graph.edges[edge_id], node_id, layout, edge_groups, dist=80)
+        items.append([exit_no, math.degrees(math.atan2(dp[1] - p0[1], dp[0] - p0[0]))])
+    if not items:
+        return {}
+
+    items.sort(key=lambda t: t[1])
+    n = len(items)
+    if n > 1 and n * min_sep_deg < 360:
+        for _ in range(80):
+            moved = False
+            for i in range(n):
+                j = (i + 1) % n
+                gap = (items[j][1] - items[i][1]) % 360
+                if gap < min_sep_deg:
+                    push = (min_sep_deg - gap) / 2.0
+                    items[i][1] -= push
+                    items[j][1] += push
+                    moved = True
+            if not moved:
+                break
+
+    return {ex: (int(p0[0] + math.cos(math.radians(a)) * radius),
+                 int(p0[1] + math.sin(math.radians(a)) * radius))
+            for ex, a in items}
 
 
 def build_dashboard_image(graph: Graph, plan: List[Hop], step: Optional[int],
@@ -87,30 +198,57 @@ def build_dashboard_image(graph: Graph, plan: List[Hop], step: Optional[int],
     current_edge_id = current_hop.edge_id if current_hop else None
 
     canvas = np.zeros((MAP_SIZE, MAP_SIZE, 3), dtype=np.uint8)
-    canvas[:] = (30, 30, 30)
+    canvas[:] = COL_SURFACE
 
-    for edge in graph.edges.values():
+    # Kanten: erst alle "stillen", dann Pfad, zuletzt die aktuelle -> Wichtiges liegt oben
+    order = sorted(graph.edges.values(),
+                   key=lambda e: (e.id == current_edge_id, e.id in path_edge_ids))
+    mids = {}
+    for edge in order:
         if edge.id == current_edge_id:
-            color, thickness = (0, 220, 255), 5
+            color, thickness = COL_EDGE_CURRENT, 6
         elif edge.id in path_edge_ids:
-            color, thickness = (255, 140, 0), 3
+            color, thickness = COL_EDGE_PATH, 3
         else:
-            color, thickness = (110, 110, 110), 2
-        mid = _draw_edge(canvas, edge, layout, edge_groups, color, thickness)
+            color, thickness = COL_EDGE_OTHER, 2
+        mids[edge.id] = _draw_edge(canvas, edge, layout, edge_groups, color, thickness)
 
+    # Ausgangsnummern an den Kreuzungen: zeigen, ueber welche Ausfahrt welche Kante geht.
+    # Ohne die laesst sich der Plan ("Ausgang 3") nicht auf die Karte uebertragen.
+    for node_id in graph.nodes:
+        for exit_no, p in _exit_label_positions(graph, node_id, layout, edge_groups).items():
+            _chip(canvas, str(exit_no), p, COL_EXIT, scale=0.45)
+
+    # Kanten-Beschriftung mittig: Kanten-ID (passend zur Panel-Liste) + ggf. Tor-Tag
+    for edge in graph.edges.values():
+        label = f"K{edge.id}"
+        fg = COL_TEXT if edge.id in path_edge_ids else COL_TEXT_MUTED
         if edge.gate_tag is not None:
-            cv2.putText(canvas, f"T{edge.gate_tag}", (mid[0] + 4, mid[1] - 4),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+            label += f" | T{edge.gate_tag}"
+            fg = COL_GATE
+        _chip(canvas, label, _label_point(edge, layout, edge_groups), fg, scale=0.45)
 
     for node_id, pos in layout.items():
         p = to_pixel(pos)
-        is_current_node = current_hop is not None and current_hop.from_node == node_id
-        color = (0, 220, 255) if is_current_node else (200, 200, 200)
-        radius = 22 if is_current_node else 16
-        cv2.circle(canvas, p, radius, color, -1)
-        cv2.circle(canvas, p, radius, (0, 0, 0), 2)
-        cv2.putText(canvas, str(node_id), (p[0] - 8, p[1] + 6),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
+        is_current = current_hop is not None and current_hop.from_node == node_id
+        radius = 26 if is_current else 20
+        cv2.circle(canvas, p, radius + 3, COL_SURFACE, -1, cv2.LINE_AA)
+        cv2.circle(canvas, p, radius, COL_NODE_CURRENT if is_current else COL_NODE, -1, cv2.LINE_AA)
+        cv2.circle(canvas, p, radius, COL_TEXT if is_current else COL_TEXT_MUTED, 2, cv2.LINE_AA)
+        (tw, th), _ = cv2.getTextSize(str(node_id), FONT, 0.7, 2)
+        cv2.putText(canvas, str(node_id), (p[0] - tw // 2, p[1] + th // 2),
+                    FONT, 0.7, COL_SURFACE if is_current else COL_TEXT, 2, cv2.LINE_AA)
+
+    # kleine Legende, damit die Farben ohne Nachfragen lesbar sind
+    ly = MAP_SIZE - 58
+    for col, txt in ((COL_EDGE_CURRENT, "aktuelle Kante"),
+                     (COL_EDGE_PATH, "im Plan"),
+                     (COL_EDGE_OTHER, "nicht im Plan")):
+        cv2.line(canvas, (16, ly), (44, ly), col, 3, cv2.LINE_AA)
+        cv2.putText(canvas, txt, (52, ly + 4), FONT, 0.4, COL_TEXT_MUTED, 1, cv2.LINE_AA)
+        ly += 20
+    cv2.putText(canvas, "K = Kante   T = Tor   gruen = Ausgang", (16, MAP_SIZE - 96),
+                FONT, 0.4, COL_TEXT_MUTED, 1, cv2.LINE_AA)
 
     panel = np.zeros((MAP_SIZE, PANEL_WIDTH, 3), dtype=np.uint8)
     y = 35
