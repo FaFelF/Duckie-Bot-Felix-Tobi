@@ -24,7 +24,7 @@ import cv2
 import numpy as np
 import rospy
 from sensor_msgs.msg import CompressedImage
-from std_msgs.msg import Int32
+from std_msgs.msg import Int32, String
 
 from graph import Graph, load_plan
 from graph_layout import compute_layout
@@ -50,10 +50,24 @@ class DashboardNode:
 
         v = self._vehicle_name
         rospy.Subscriber(f'/{v}/switch/current_step', Int32, self.cb_current_step, queue_size=1)
+        # Live-Meldungen des mapping_recorder_node. Ohne die wuerde das Dashboard nur die
+        # beim Start geladene Karte kennen (im Mapping-Lauf known_map.json, dort steht noch
+        # kein Tor drin) und die gemappten Tore immer als 0 anzeigen -- der Recorder haelt
+        # seinen Graphen im Speicher und schreibt ihn erst am Ende in mapped_map.json.
+        rospy.Subscriber(f'/{v}/mapping/gate_mapped', String, self.cb_gate_mapped, queue_size=10)
         self.pub_dashboard = rospy.Publisher(f'/{v}/debug/dashboard', CompressedImage, queue_size=1)
 
     def cb_current_step(self, msg):
         self._step = msg.data
+
+    def cb_gate_mapped(self, msg):
+        try:
+            edge_id, tag = (int(x) for x in msg.data.split(':'))
+        except (ValueError, AttributeError):
+            rospy.logwarn_throttle(5, f"gate_mapped unlesbar: {msg.data!r}")
+            return
+        if edge_id in self.graph.edges:
+            self.graph.set_gate_tag(edge_id, tag)
 
     def run(self):
         rate = rospy.Rate(2)

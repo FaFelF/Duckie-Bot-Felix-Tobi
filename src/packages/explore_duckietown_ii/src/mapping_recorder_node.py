@@ -22,7 +22,7 @@ import os
 from collections import Counter, defaultdict
 
 import rospy
-from std_msgs.msg import Int32
+from std_msgs.msg import Int32, String
 
 from graph import Graph
 from gate_tag_voting import pick_confident_tag
@@ -55,6 +55,12 @@ class MappingRecorderNode:
         self._saved = False
 
         v = self._vehicle_name
+        # Zugeordnete Tore live melden ("<edge_id>:<tag>"), damit das Dashboard den
+        # Mapping-Fortschritt waehrend der Fahrt zeigen kann. Ohne das saehe es nur die
+        # known_map.json vom Start, in der noch kein Tor eingetragen ist -> immer 0.
+        # latch=True: ein spaeter startendes Dashboard bekommt den letzten Wert noch.
+        self.pub_gate_mapped = rospy.Publisher(f'/{v}/mapping/gate_mapped', String,
+                                               queue_size=10, latch=True)
         rospy.Subscriber(f'/{v}/detect/apriltag', Int32, self.cb_apriltag, queue_size=1)
         rospy.Subscriber(f'/{v}/switch/current_edge', Int32, self.cb_current_edge, queue_size=1)
         rospy.Subscriber(f'/{v}/switch/control', Int32, self.cb_control, queue_size=1)
@@ -90,6 +96,7 @@ class MappingRecorderNode:
             rospy.loginfo(f"Kante {edge_id}: kein sicheres Tor erkannt (0 Sichtungen oder zu wenige).")
             return
         self.graph.set_gate_tag(edge_id, tag)
+        self.pub_gate_mapped.publish(String(data=f"{edge_id}:{tag}"))
         rospy.loginfo(f"Kante {edge_id} -> Tor {tag}")
 
 
