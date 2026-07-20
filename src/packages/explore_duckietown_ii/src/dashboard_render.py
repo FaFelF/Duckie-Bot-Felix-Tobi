@@ -14,7 +14,7 @@ from typing import Dict, List, Optional, Tuple
 import cv2
 import numpy as np
 
-from graph import Graph, Hop
+from graph import Direction, Graph, Hop, relative_direction
 
 MAP_SIZE = 700
 PANEL_WIDTH = 300
@@ -118,15 +118,47 @@ def build_dashboard_image(graph: Graph, plan: List[Hop], step: Optional[int],
         cv2.putText(panel, f"Lauf: {run_label}", (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
         y += 35
 
-    cv2.putText(panel, "Aktueller Knoten:", (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
+    # 1. Wo der Bot laut Plan gerade ist: Knoten UND ueber welchen Ausgang er ihn
+    #    verlassen hat -- der Ausgang ist noetig, um die Abbiegerichtung nachzuvollziehen.
+    cv2.putText(panel, "Aktueller Knoten / Ausgang:", (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
     y += 30
     if current_hop is not None:
-        node_text = current_hop.from_node
+        node_text = f"{current_hop.from_node}  (Ausgang {current_hop.from_exit})"
     elif step is not None:
         node_text = "Ziel erreicht"
     else:
         node_text = "--"
-    cv2.putText(panel, str(node_text), (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 220, 255), 2)
+    cv2.putText(panel, str(node_text), (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 220, 255), 2)
+    y += 45
+
+    # 3. Zu welchem Knoten der aktuelle Hop fuehrt (ueber welchen Eingang).
+    cv2.putText(panel, "Naechster Knoten:", (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
+    y += 30
+    if current_hop is not None:
+        next_text = f"{current_hop.to_node}  (Eingang {current_hop.to_exit})"
+    else:
+        next_text = "--"
+    cv2.putText(panel, next_text, (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 255, 140), 2)
+    y += 45
+
+    # 2. Richtung, die an der KOMMENDEN Kreuzung gefahren werden muss. Gleiche Rechnung
+    #    wie in PlanState.next_direction(): (Zielausfahrt - Einfahrt) mod 4.
+    cv2.putText(panel, "Abbiegen an naechster Kreuzung:", (10, y),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
+    y += 32
+    dir_text, dir_color = "--", (150, 150, 150)
+    if current_hop is not None and step is not None and step + 1 < len(plan):
+        try:
+            d = relative_direction(current_hop.to_exit, plan[step + 1].from_exit)
+            dir_text = {Direction.Left: "<< LINKS",
+                        Direction.Straight: "^ GERADEAUS",
+                        Direction.Right: "RECHTS >>"}[d]
+            dir_color = (0, 165, 255)
+        except ValueError:
+            dir_text, dir_color = "PLAN FEHLERHAFT", (0, 0, 255)
+    elif current_hop is not None:
+        dir_text = "letzter Hop - Ziel"
+    cv2.putText(panel, dir_text, (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.8, dir_color, 2)
     y += 45
 
     cv2.putText(panel, "Aktuelle Kante:", (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
@@ -156,5 +188,23 @@ def build_dashboard_image(graph: Graph, plan: List[Hop], step: Optional[int],
     y += 25
     cv2.putText(panel, f"Kanten im Pfad: {len(path_edge_ids)}", (10, y),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.45, (150, 150, 150), 1)
+    y += 40
+
+    # 4. Bisher gemappte Tore: welche Kante hat schon welches Tor-Tag bekommen
+    #    (mapping_recorder_node -> graph.set_gate_tag). Zeigt live den Mapping-Fortschritt.
+    cv2.line(panel, (10, y - 20), (PANEL_WIDTH - 10, y - 20), (80, 80, 80), 1)
+    mapped = sorted((e.id, e.gate_tag) for e in graph.edges.values() if e.gate_tag is not None)
+    cv2.putText(panel, f"Gemappte Tore: {len(mapped)}/{len(graph.edges)}", (10, y),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
+    y += 26
+    if not mapped:
+        cv2.putText(panel, "noch keine", (14, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (120, 120, 120), 1)
+    for edge_id, tag in mapped:
+        if y > MAP_SIZE - 12:      # Panel voll -> Rest weglassen statt rauszuzeichnen
+            cv2.putText(panel, "...", (14, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (150, 150, 150), 1)
+            break
+        cv2.putText(panel, f"Kante {edge_id}  ->  Tor {tag}", (14, y),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+        y += 24
 
     return np.hstack([canvas, panel])

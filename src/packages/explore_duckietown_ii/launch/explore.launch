@@ -21,7 +21,13 @@
   </node>
 
   <node pkg="explore_duckietown_ii" type="detect_apriltag_node.py"   name="detect_apriltag_node"   output="screen" />
-  <node pkg="explore_duckietown_ii" type="detect_duckies_node.py"    name="detect_duckies_node"    output="screen" />
+
+  <!-- Enten-Erkennung fuer Challenge 4 aus dem Autostart genommen: fuer Mapping/Torlauf
+       nicht noetig, belegt aber die GPU und oeffnet ein weiteres Fenster (Duckie View),
+       das den Blick aufs Dashboard verstellt. Zum Wiedereinschalten: run_duckies:=true -->
+  <arg name="run_duckies" default="false" />
+  <node pkg="explore_duckietown_ii" type="detect_duckies_node.py"    name="detect_duckies_node"    output="screen"
+        if="$(arg run_duckies)" />
   <node pkg="explore_duckietown_ii" type="debug_view_node.py"        name="debug_view_node"        output="screen" />
   <node pkg="explore_duckietown_ii" type="control_lane_node.py"      name="control_lane_node"      output="screen" />
 

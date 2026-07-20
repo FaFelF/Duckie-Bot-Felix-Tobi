@@ -57,7 +57,9 @@ class DashboardNode:
 
     def run(self):
         rate = rospy.Rate(2)
-        show_gui = os.environ.get('DUCKIE_GUI') == '1'
+        # Fenster immer oeffnen. Vorher hing es hinter DUCKIE_GUI=1 -- das ist wegen der
+        # X11-Probleme aber dauerhaft aus, dadurch war das Dashboard faktisch unsichtbar
+        # (es lief nur als Topic /debug/dashboard).
         while not rospy.is_shutdown():
             try:
                 img = build_dashboard_image(self.graph, self.plan, self._step, self.layout, self._run_label)
@@ -66,9 +68,8 @@ class DashboardNode:
                 msg.format = "jpeg"
                 msg.data = np.array(cv2.imencode('.jpg', img)[1]).tobytes()
                 self.pub_dashboard.publish(msg)
-                if show_gui:
-                    cv2.imshow('Dashboard', img)
-                    cv2.waitKey(1)
+                cv2.imshow('Dashboard', img)
+                cv2.waitKey(1)
             except Exception as e:
                 rospy.logwarn_throttle(5, f"dashboard_node failed: {e}")
             rate.sleep()
