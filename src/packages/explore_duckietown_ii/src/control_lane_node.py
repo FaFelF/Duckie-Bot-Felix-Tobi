@@ -154,8 +154,7 @@ class ControlLaneNode:
     def cbFollowLane(self, error):
         if self._control_mode != ControlType.Lane:
             return
-        
-        print(f'received message. enabled : {self._control_mode == ControlType.Lane}')
+
         error = error.data
 
         #PID-Regler eingefügt
@@ -416,7 +415,6 @@ class ControlLaneNode:
                 twist.v = 0.0
                 twist.omega = 0.0
 
-            print(f'publishing {twist}')
             self.pub_cmd_vel.publish(twist)
             self.pub_debug_v.publish(Float64(data=twist.v))
             self.pub_debug_omega.publish(Float64(data=twist.omega))

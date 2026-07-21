@@ -63,7 +63,6 @@ class SwitchControlNode:
     def cbDuckieDetected(self, msg):
         if msg.data > 0:
             self._control_mode = ControlType.Obstacle
-            print('Duckies detected!')
         else:
             if self._control_mode == ControlType.Obstacle:
                 self._control_mode = ControlType.Lane
@@ -72,8 +71,7 @@ class SwitchControlNode:
 
 
     def cbLaneDetected(self, msg):
-        print('received message')
-        # Write your own code her
+        pass
 
     def cbIntersectionFinished(self, msg):
         self.intersection_finished = msg.data

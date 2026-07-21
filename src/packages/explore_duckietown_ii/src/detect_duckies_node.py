@@ -77,6 +77,7 @@ class DetectDuckiesNode:
         self.debug_lane_row = None
 
         self._pending_image = None
+        self._cam_last = None   # Zeit des letzten empfangenen Kamerabilds (Aussetzer-Diagnose)
         self._pending_lock = threading.Lock()
 
         self._camera_topic = f"/{self._vehicle_name}/camera_node/image/compressed"
@@ -253,6 +254,11 @@ class DetectDuckiesNode:
             self.debug_largest_gap = None
             self.debug_blocked = False
             return
+        # Zeitpunkt des letzten EMPFANGENEN Kamerabilds -> im Inferenz-Log als cam_age.
+        # Ist bei einem grossen gap cam_age auch gross -> Kamera/WLAN liefert nichts
+        # (Loop schlaeft). Ist cam_age klein -> Bilder kamen an, der Loop war blockiert
+        # (z.B. cv2.imshow ueber X11 haelt den GIL). Trennt die beiden Ausfall-Ursachen.
+        self._cam_last = time.time()
         np_arr = np.frombuffer(image_msg.data, np.uint8)
         cv_image = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
         cv_image = cv2.resize(cv_image, (640, 480))
@@ -474,7 +480,22 @@ class DetectDuckiesNode:
         detections = raw_output[0][0]
 
         max_conf = max((box[4] for box in detections), default=0)
-        rospy.loginfo_throttle(2, f"Duckie detect: max_conf={max_conf:.3f}, threshold={self.conf_threshold}, inference={inference_ms:.0f}ms, gap={gap_ms:.0f}ms")
+        # Inferenz-Timing: reine Rechenzeit (inference_ms) + Abstand zum letzten Lauf
+        # (gap_ms, = 1000/Hz -> effektive Rate). loginfo (kein print) -> mit Zeitstempel,
+        # gedrosselt auf 1/s, damit es das Terminal nicht flutet.
+        hz = 1000.0 / gap_ms if gap_ms > 0 else 0.0
+        cam_age_ms = (now - self._cam_last) * 1000 if self._cam_last else -1
+        rospy.loginfo_throttle(
+            1.0,
+            f"Duckie detect: inference={inference_ms:4.0f}ms | gap={gap_ms:5.0f}ms "
+            f"({hz:4.1f} Hz) | cam_age={cam_age_ms:4.0f}ms | max_conf={max_conf:.2f} thr={self.conf_threshold}")
+        # Aussetzer klar melden: grosser gap trotz frischer Kamerabilder -> Loop war
+        # blockiert (X11/GIL), nicht die Kamera.
+        if gap_ms > 500:
+            rospy.logwarn("[duckie] AUSSETZER: gap=%.0fms, cam_age=%.0fms -> %s",
+                          gap_ms, cam_age_ms,
+                          "Loop blockiert (Kamera lieferte, X11/GIL?)" if 0 <= cam_age_ms < 300
+                          else "Kamera/WLAN lieferte nichts")
 
         for box in detections:
             x1, y1, x2, y2, conf, class_id = box
