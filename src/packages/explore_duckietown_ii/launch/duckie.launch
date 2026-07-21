@@ -1,0 +1,19 @@
+<launch>
+  <arg name="veh" default="$(env VEHICLE_NAME)" />
+
+  <!-- Nur die Nodes fuer das ENTEN-AUSWEICHEN. Weggelassen gegenueber explore.launch:
+       detect_lane (im duckie_only-Modus faehrt detect_duckies die Spur selbst),
+       detect_apriltag + detect_intersection (Tags/Kreuzungen spielen fuer die isolierte
+       Ausweich-Challenge keine Rolle). Spart GPU/CPU und oeffnet keine unnoetigen Fenster. -->
+
+  <!-- Kern: Erkennung/Spur/Ausweichen -> Modus-Umschaltung -> Motorbefehle -->
+  <node pkg="explore_duckietown_ii" type="detect_duckies_node.py" name="detect_duckies_node" output="screen" />
+  <node pkg="explore_duckietown_ii" type="switch_control_node.py" name="switch_control_node" output="screen" />
+  <node pkg="explore_duckietown_ii" type="control_lane_node.py"   name="control_lane_node"   output="screen" />
+
+  <!-- Debug/Tuning-Fenster (Duckie View + Line Masks kommen aus detect_duckies selbst).
+       Mit debug:=false weglassen, dann laeuft es headless bis auf die Duckie-Fenster. -->
+  <arg name="debug" default="true" />
+  <node if="$(arg debug)" pkg="explore_duckietown_ii" type="configuration_node.py" name="configuration_node" output="screen" />
+  <node if="$(arg debug)" pkg="explore_duckietown_ii" type="debug_view_node.py"    name="debug_view_node"    output="screen" />
+</launch>
