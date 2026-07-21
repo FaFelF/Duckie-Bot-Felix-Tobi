@@ -827,13 +827,26 @@ class DetectDuckiesNode:
 
         Autor: Felix Faass
         """
-        lines_ok = (self.center_yellow is not None and self.center_white is not None
-                    and (self.white_valid or self.yellow_valid))
-        if lines_ok:
-            d_yellow = abs(self.image_middle - self.center_yellow)
-            d_white = abs(self.image_middle - self.center_white)
-            # weiss naeher -> +1 = LINKS (weg von weiss); sonst -1 = RECHTS (weg von gelb)
-            return 1 if d_white < d_yellow else -1
+        # NUR VALIDE Linien duerfen die Richtung bestimmen. Sonst entscheidet eine
+        # erfundene/von der Ente kontaminierte Linie mit: eine gelbe Ente links wird als
+        # "gelbe Linie" gewertet -> "weg von gelb" -> rechts, obwohl rechts die echte
+        # weisse Linie steht und es nach links gehen muesste.
+        yv = self.yellow_valid and self.center_yellow is not None
+        wv = self.white_valid and self.center_white is not None
+        near = None
+        if yv and wv:
+            near = (self.center_white
+                    if abs(self.image_middle - self.center_white)
+                       < abs(self.image_middle - self.center_yellow)
+                    else self.center_yellow)
+        elif wv:
+            near = self.center_white
+        elif yv:
+            near = self.center_yellow
+        if near is not None:
+            # WEG von der (naeheren) Linie: Linie rechts der Mitte -> +1 = LINKS,
+            # Linie links der Mitte -> -1 = RECHTS.
+            return 1 if near > self.image_middle else -1
 
         if ducks_in_path:
             # naechste (unterste) Ente im Weg -> von ihr wegdrehen:
