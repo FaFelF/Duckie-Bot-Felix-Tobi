@@ -22,6 +22,7 @@ gewaehlt (siehe Aufgabenstellung).
 
 import random
 from collections import deque
+import heapq
 from typing import List, Optional
 
 from graph import Graph, Hop, Plan
@@ -47,23 +48,34 @@ def is_uturn(graph: Graph, node: str, entry_exit: int, edge_id: int) -> bool:
     return graph.nodes[node].exits.get(entry_exit) == edge_id
 
 
+def path_weight(path: List[int], weights: Optional[dict], default: float = 1.0) -> float:
+    """Gesamtkosten eines Wegs. Ohne weights = Anzahl Kanten (Kreuzungsanzahl)."""
+    if weights is None:
+        return float(len(path))
+    return sum(weights.get(eid, default) for eid in path)
+
+
 def shortest_path_edges(graph: Graph, start: str, goal: str,
                          rng: random.Random, entry_exit: Optional[int] = None,
-                         next_edge: Optional[int] = None) -> List[int]:
+                         next_edge: Optional[int] = None,
+                         weights: Optional[dict] = None) -> List[int]:
     """
     Kuerzester wendefreier Weg von start zu goal, als Liste von edge_ids.
 
-    BFS laeuft ueber ZUSTAENDE (Knoten, Einfahrt) statt nur ueber Knoten. Das ist
+    Suche laeuft ueber ZUSTAENDE (Knoten, Einfahrt) statt nur ueber Knoten. Das ist
     noetig, weil "erreichbar" hier von der Einfahrt abhaengt: derselbe Knoten kann
     ueber die eine Einfahrt eine Weiterfahrt erlauben und ueber die andere nicht.
-    Eine reine Knoten-BFS findet dann den kurzen Weg, der in eine Wende laeuft, und
+    Eine reine Knoten-Suche findet dann den kurzen Weg, der in eine Wende laeuft, und
     uebersieht den etwas laengeren, der fahrbar waere.
 
     entry_exit: Ausfahrt, durch die der Bot an `start` hereingekommen ist.
     next_edge:  Kante, die NACH dem Weg befahren werden soll -- der Zielzustand muss
                 sie ohne Wende erlauben. Damit kann derselbe Aufruf auch einen Umweg
                 finden, wenn das Ziel direkt auf der Einfahrtskante liegt.
-    Zufaellige Nachbar-Reihenfolge -> bei mehreren gleich kurzen Wegen zufaellige Wahl.
+    weights:    optional edge_id -> Kosten (z.B. gemessene Fahrzeit). Fehlt es, zaehlt
+                jede Kante 1 (= kuerzeste Kreuzungsanzahl wie bisher). Mit Gewichten wird
+                aus der BFS eine Dijkstra-Suche (schnellster statt kuerzester Weg).
+    Bei mehreren gleich guten Wegen wird zufaellig einer gewaehlt.
     """
     def reached(node: str, ex: Optional[int]) -> bool:
         if node != goal:
@@ -73,22 +85,30 @@ def shortest_path_edges(graph: Graph, start: str, goal: str,
     if reached(start, entry_exit):
         return []
 
-    visited = {(start, entry_exit)}
-    queue = deque([(start, entry_exit, [])])
-    while queue:
-        node, ex, path = queue.popleft()
-        for edge_id, _ in _shuffled(list(graph.neighbors(node)), rng):
+    # Dijkstra ueber (Knoten, Einfahrt). Ziel-Pruefung beim POPPEN (nicht beim Finden),
+    # sonst waere ein spaeter entdeckter, guenstigerer Weg nicht garantiert. rng.random()
+    # als Tie-Break -> bei gleichen Kosten zufaellige Wahl. Ohne weights = Kosten 1 pro
+    # Kante = BFS nach Kreuzungsanzahl.
+    default = (graph.mean_travel_time() or 1.0) if weights is not None else 1.0
+    best = {(start, entry_exit): 0.0}
+    heap = [(0.0, rng.random(), start, entry_exit, [])]
+    while heap:
+        cost, _, node, ex, path = heapq.heappop(heap)
+        if reached(node, ex):
+            return path
+        if cost > best.get((node, ex), float('inf')):
+            continue
+        for edge_id, _n in _shuffled(list(graph.neighbors(node)), rng):
             if is_uturn(graph, node, ex, edge_id):
                 continue
             hop = graph.hop_from_edge(edge_id, node)
             state = (hop.to_node, hop.to_exit)
-            if state in visited:
-                continue
-            new_path = path + [edge_id]
-            if reached(hop.to_node, hop.to_exit):
-                return new_path
-            visited.add(state)
-            queue.append((hop.to_node, hop.to_exit, new_path))
+            w = 1.0 if weights is None else weights.get(edge_id, default)
+            new_cost = cost + w
+            if new_cost < best.get(state, float('inf')):
+                best[state] = new_cost
+                heapq.heappush(heap, (new_cost, rng.random(), hop.to_node, hop.to_exit,
+                                      path + [edge_id]))
 
     raise ValueError(
         f"Kein wendefreier Weg von {start} nach {goal} gefunden "

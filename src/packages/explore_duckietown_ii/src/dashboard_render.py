@@ -227,6 +227,10 @@ def build_dashboard_image(graph: Graph, plan: List[Hop], step: Optional[int],
         if edge.gate_tag is not None:
             label += f" | T{edge.gate_tag}"
             fg = COL_GATE
+        # Gemessene Fahrzeit (aus dem Mapping-Lauf) direkt an der Kante -- danach bewertet
+        # der gate_planner, welcher Weg schneller ist.
+        if edge.travel_time is not None:
+            label += f" | {edge.travel_time:.1f}s"
         _chip(canvas, label, _label_point(edge, layout, edge_groups), fg, scale=0.45)
 
     for node_id, pos in layout.items():
@@ -248,7 +252,7 @@ def build_dashboard_image(graph: Graph, plan: List[Hop], step: Optional[int],
         cv2.line(canvas, (16, ly), (44, ly), col, 3, cv2.LINE_AA)
         cv2.putText(canvas, txt, (52, ly + 4), FONT, 0.4, COL_TEXT_MUTED, 1, cv2.LINE_AA)
         ly += 20
-    cv2.putText(canvas, "K = Kante   T = Tor   gruen = Ausgang", (16, MAP_SIZE - 96),
+    cv2.putText(canvas, "K = Kante   T = Tor   s = Fahrzeit   gruen = Ausgang", (16, MAP_SIZE - 96),
                 FONT, 0.4, COL_TEXT_MUTED, 1, cv2.LINE_AA)
 
     panel = np.zeros((MAP_SIZE, PANEL_WIDTH, 3), dtype=np.uint8)
@@ -330,8 +334,12 @@ def build_dashboard_image(graph: Graph, plan: List[Hop], step: Optional[int],
     cv2.putText(panel, "Aktuelle Kante:", (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
     y += 30
     if current_edge_id is not None:
-        tag = graph.edges[current_edge_id].gate_tag
-        edge_text = f"{current_edge_id}" + (f" (Tor {tag})" if tag is not None else "")
+        cur_edge = graph.edges[current_edge_id]
+        edge_text = f"{current_edge_id}"
+        if cur_edge.gate_tag is not None:
+            edge_text += f" (Tor {cur_edge.gate_tag})"
+        if cur_edge.travel_time is not None:
+            edge_text += f" {cur_edge.travel_time:.1f}s"
     else:
         edge_text = "--"
     cv2.putText(panel, edge_text, (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 220, 255), 2)

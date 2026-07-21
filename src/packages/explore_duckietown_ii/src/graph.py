@@ -45,6 +45,7 @@ class Edge:
     node_b: str
     exit_b: int
     gate_tag: Optional[int] = None  # 5-13, erst nach dem Mapping-Lauf gesetzt
+    travel_time: Optional[float] = None  # gemessene Fahrzeit (s), erst nach dem Mapping-Lauf
 
 
 @dataclass
@@ -129,6 +130,16 @@ class Graph:
 
     def set_gate_tag(self, edge_id: int, tag: int) -> None:
         self.edges[edge_id].gate_tag = tag
+
+    def set_travel_time(self, edge_id: int, seconds: float) -> None:
+        self.edges[edge_id].travel_time = seconds
+
+    def mean_travel_time(self) -> Optional[float]:
+        """Durchschnitt der gemessenen Kanten-Fahrzeiten -- Fallback-Gewicht fuer
+        Kanten ohne Messung, damit sie beim Planen weder bevorzugt noch gemieden
+        werden. None, wenn noch gar keine Kante gemessen wurde."""
+        times = [e.travel_time for e in self.edges.values() if e.travel_time is not None]
+        return sum(times) / len(times) if times else None
 
     def hop_from_edge(self, edge_id: int, from_node: str) -> Hop:
         """Baut einen orientierten Hop fuer die Fahrt ueber edge_id, gestartet

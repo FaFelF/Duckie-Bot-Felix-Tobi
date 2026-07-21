@@ -53,6 +53,7 @@ class MappingRecorderNode:
         self._sightings = defaultdict(Counter)  # edge_id -> Counter[tag_id]
         self._finalized = set()
         self._saved = False
+        self._edge_times = defaultdict(list)  # edge_id -> [gemessene Fahrzeiten (s)]
 
         v = self._vehicle_name
         # Zugeordnete Tore live melden ("<edge_id>:<tag>"), damit das Dashboard den
@@ -61,9 +62,15 @@ class MappingRecorderNode:
         # latch=True: ein spaeter startendes Dashboard bekommt den letzten Wert noch.
         self.pub_gate_mapped = rospy.Publisher(f'/{v}/mapping/gate_mapped', String,
                                                queue_size=10, latch=True)
+        # Gemittelte Fahrzeit pro Kante live melden ("<edge_id>:<sekunden>"), analog zu
+        # gate_mapped -- das Dashboard zeigt sie an der Kante an. latch=True fuer spaet
+        # startende Subscriber.
+        self.pub_edge_time = rospy.Publisher(f'/{v}/mapping/edge_time', String,
+                                             queue_size=10, latch=True)
         rospy.Subscriber(f'/{v}/detect/apriltag', Int32, self.cb_apriltag, queue_size=1)
         rospy.Subscriber(f'/{v}/switch/current_edge', Int32, self.cb_current_edge, queue_size=1)
         rospy.Subscriber(f'/{v}/switch/control', Int32, self.cb_control, queue_size=1)
+        rospy.Subscriber(f'/{v}/switch/edge_time', String, self.cb_edge_time, queue_size=10)
 
     def cb_control(self, msg):
         self._control_mode = msg.data
@@ -78,6 +85,23 @@ class MappingRecorderNode:
         if new_edge != self._current_edge:
             self._finalize_edge(self._current_edge)
             self._current_edge = new_edge
+
+    def cb_edge_time(self, msg):
+        """Eine Fahrzeit-Messung von switch_control ("<edge_id>:<sekunden>"). Pro Kante
+        gemittelt (eine Kante kann beim Mapping mehrfach befahren werden, z.B. beim
+        Backtracking) und direkt im Graphen abgelegt -> wird beim Speichern mit
+        geschrieben und dient dem gate_planner spaeter als Weg-Gewicht."""
+        try:
+            edge_str, secs_str = msg.data.split(':')
+            edge_id, seconds = int(edge_str), float(secs_str)
+        except (ValueError, AttributeError):
+            rospy.logwarn(f"Ungueltige edge_time-Nachricht: {msg.data!r}")
+            return
+        self._edge_times[edge_id].append(seconds)
+        mean = sum(self._edge_times[edge_id]) / len(self._edge_times[edge_id])
+        self.graph.set_travel_time(edge_id, mean)
+        self.pub_edge_time.publish(String(data=f"{edge_id}:{mean:.3f}"))
+        rospy.loginfo(f"Kante {edge_id}: Fahrzeit {seconds:.2f}s (Mittel {mean:.2f}s)")
 
     def cb_apriltag(self, msg):
         tag = msg.data

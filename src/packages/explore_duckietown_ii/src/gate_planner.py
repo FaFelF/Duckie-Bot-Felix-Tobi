@@ -19,7 +19,7 @@ import random
 from typing import List, Optional, Tuple
 
 from graph import Graph, Hop, Plan
-from mapping_planner import shortest_path_edges
+from mapping_planner import shortest_path_edges, path_weight
 
 
 def build_gate_plan(graph: Graph, tag_sequence: List[int], start_node: str,
@@ -39,6 +39,14 @@ def build_gate_plan(graph: Graph, tag_sequence: List[int], start_node: str,
     rng = random.Random(seed)
     plan: Plan = []
     target_hop_indices: List[int] = []
+
+    # Gewichte = gemessene Fahrzeiten (aus dem Mapping-Lauf). Der Torlauf ist zeitkritisch
+    # -> SCHNELLSTEN Weg waehlen, nicht nur kuerzeste Kreuzungsanzahl. Ungemessene Kanten
+    # bekommen in shortest_path_edges den Durchschnitt (neutral). Ohne jede Messung ->
+    # weights=None -> Verhalten exakt wie vorher (Kreuzungsanzahl).
+    weights = {e.id: e.travel_time for e in graph.edges.values() if e.travel_time is not None}
+    weights = weights or None
+    default_w = (graph.mean_travel_time() or 1.0) if weights is not None else 1.0
 
     first_edge = graph.nodes[start_node].exits.get(start_exit)
     if first_edge is None:
@@ -74,14 +82,17 @@ def build_gate_plan(graph: Graph, tag_sequence: List[int], start_node: str,
         for endpoint in (edge.node_a, edge.node_b):
             try:
                 routes.append(shortest_path_edges(graph, current, endpoint, rng,
-                                                  entry_exit, next_edge=edge.id))
+                                                  entry_exit, next_edge=edge.id,
+                                                  weights=weights))
             except ValueError:
                 continue
         if not routes:
             raise ValueError(
                 f"Tor {tag} (Kante {edge.id}) von {current} aus nicht wendefrei erreichbar.")
-        shortest = min(len(r) for r in routes)
-        route = rng.choice([r for r in routes if len(r) == shortest])
+        # Schnellster (nicht kuerzester) Weg zum Tor; bei Gleichstand zufaellig.
+        best_cost = min(path_weight(r, weights, default_w) for r in routes)
+        route = rng.choice([r for r in routes
+                            if abs(path_weight(r, weights, default_w) - best_cost) < 1e-9])
 
         for edge_id in route:
             hop = graph.hop_from_edge(edge_id, current)

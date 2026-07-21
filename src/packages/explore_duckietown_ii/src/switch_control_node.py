@@ -2,7 +2,7 @@
 
 
 import rospy
-from std_msgs.msg import Float64, Int32, Bool
+from std_msgs.msg import Float64, Int32, Bool, String
 from enum import Enum
 
 import os
@@ -48,6 +48,14 @@ class SwitchControlNode:
         #   Backtracking, und "welcher Schritt" dann aus der Kanten-ID nicht eindeutig waere).
         self.pub_current_edge = rospy.Publisher(f'/{self._vehicle_name}/switch/current_edge', Int32, queue_size=1, latch=True)
         self.pub_current_step = rospy.Publisher(f'/{self._vehicle_name}/switch/current_step', Int32, queue_size=1, latch=True)
+        # Fahrzeit pro Kante messen: Zeit vom Losfahren auf einer Kante bis zur naechsten
+        # Kreuzung ("edge_id:sekunden"). Der mapping_recorder mittelt das und schreibt es
+        # in die Karte -> gate_planner bevorzugt spaeter die schnellere Route.
+        self.pub_edge_time = rospy.Publisher(f'/{self._vehicle_name}/switch/edge_time', String, queue_size=10)
+        # Start der Fahrt auf der aktuellen Kante. Wird beim Losfahren gesetzt (hier fuer die
+        # Startkante, danach nach jeder Abbiegung) und bei Ankunft an der naechsten Kreuzung
+        # zur Fahrzeit-Messung ausgewertet.
+        self._edge_start_time = rospy.Time.now()
         plan_path = rospy.get_param('~plan_path', os.path.join(os.path.dirname(__file__), '..', 'config', 'plan.json'))
         self._plan_state = PlanState(load_plan(plan_path))
         self._publish_plan_progress()
@@ -105,6 +113,8 @@ class SwitchControlNode:
             # Jetzt erst den Cooldown starten: ab hier fährt er von der Kreuzung weg.
             # Der Timer muss nur noch das Wegfahren von der roten Linie abdecken.
             self._intersection_cooldown_start = rospy.Time.now()
+            # Ab hier faehrt er auf der naechsten Kante los -> Fahrzeit-Messung neu starten.
+            self._edge_start_time = rospy.Time.now()
 
     def cbIntersection(self, msg):
         """
@@ -128,6 +138,14 @@ class SwitchControlNode:
         # Cooldown startet NICHT hier, sondern erst nach dem Abbiegen (cbIntersectionFinished),
         # damit Ausrichten/Abbiegen beliebig lang dauern dürfen, ohne dass er erneut triggert.
         self._intersection_cooldown_start = None
+
+        # Kante zu Ende gefahren (rote Linie an der naechsten Kreuzung erkannt) -> Fahrzeit
+        # dieser Kante melden. Plan ist hier noch NICHT weitergeschaltet, current_edge_id ist
+        # also die gerade befahrene Kante. Der mapping_recorder mittelt das pro Kante.
+        edge_id = self._plan_state.current_edge_id
+        if edge_id is not None and self._edge_start_time is not None:
+            elapsed = (rospy.Time.now() - self._edge_start_time).to_sec()
+            self.pub_edge_time.publish(String(data=f"{edge_id}:{elapsed:.3f}"))
 
         # Letzter Streckenabschnitt des Plans beendet -> Ziel erreicht, keine weitere
         # Abbiegung vorgesehen. Einfach stoppen statt in Align/Intersection weiterzumachen.

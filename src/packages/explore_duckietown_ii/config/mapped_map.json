@@ -35,7 +35,8 @@
       "exit_a": 1,
       "node_b": "B",
       "exit_b": 1,
-      "gate_tag": 7
+      "gate_tag": 7,
+      "travel_time": 23.202
     },
     "1": {
       "id": 1,
@@ -43,7 +44,8 @@
       "exit_a": 2,
       "node_b": "C",
       "exit_b": 2,
-      "gate_tag": 6
+      "gate_tag": 6,
+      "travel_time": 19.768
     },
     "2": {
       "id": 2,
@@ -51,7 +53,8 @@
       "exit_a": 3,
       "node_b": "C",
       "exit_b": 1,
-      "gate_tag": 8
+      "gate_tag": 8,
+      "travel_time": 4.042
     },
     "3": {
       "id": 3,
@@ -59,7 +62,8 @@
       "exit_a": 4,
       "node_b": "B",
       "exit_b": 2,
-      "gate_tag": 10
+      "gate_tag": 10,
+      "travel_time": 3.772
     },
     "4": {
       "id": 4,
@@ -67,7 +71,8 @@
       "exit_a": 3,
       "node_b": "C",
       "exit_b": 4,
-      "gate_tag": 9
+      "gate_tag": 9,
+      "travel_time": 14.323
     }
   }
 }

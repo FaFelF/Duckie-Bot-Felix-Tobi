@@ -68,6 +68,10 @@ class DashboardNode:
         # kein Tor drin) und die gemappten Tore immer als 0 anzeigen -- der Recorder haelt
         # seinen Graphen im Speicher und schreibt ihn erst am Ende in mapped_map.json.
         rospy.Subscriber(f'/{v}/mapping/gate_mapped', String, self.cb_gate_mapped, queue_size=10)
+        # Live gemittelte Fahrzeiten pro Kante (nur im Mapping-Lauf gesendet) -- analog zu
+        # gate_mapped, damit das Dashboard sie sofort an der Kante zeigt, statt erst nach
+        # dem Speichern in mapped_map.json.
+        rospy.Subscriber(f'/{v}/mapping/edge_time', String, self.cb_edge_time, queue_size=10)
         self.pub_dashboard = rospy.Publisher(f'/{v}/debug/dashboard', CompressedImage, queue_size=1)
 
     def cb_current_step(self, msg):
@@ -81,6 +85,16 @@ class DashboardNode:
             return
         if edge_id in self.graph.edges:
             self.graph.set_gate_tag(edge_id, tag)
+
+    def cb_edge_time(self, msg):
+        try:
+            edge_str, secs_str = msg.data.split(':')
+            edge_id, seconds = int(edge_str), float(secs_str)
+        except (ValueError, AttributeError):
+            rospy.logwarn_throttle(5, f"edge_time unlesbar: {msg.data!r}")
+            return
+        if edge_id in self.graph.edges:
+            self.graph.set_travel_time(edge_id, seconds)
 
     def run(self):
         rate = rospy.Rate(2)
