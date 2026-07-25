@@ -80,9 +80,6 @@ festgelegt — **bitte nicht neu aufrollen**, außer es gibt einen konkreten Gru
 ### 3.1 Bestehende Pakete (nicht Teil dieser Challenge, nur Kontext)
 
 - `src/packages/duckietown_msgs/` — Standard-Duckietown-Message-Definitionen.
-- `src/packages/follow_lane/` — ältere, einfachere Basisversion (nur
-  Lane-Following + einfache Kreuzungserkennung). Nicht weiter relevant für
-  Challenge 4.
 - `src/packages/explore_duckietown_ii/` — das Package, auf dem alles aufbaut.
 
 ### 3.2 Bestehende Nodes in `explore_duckietown_ii/src/` (aus einem früheren
