@@ -192,7 +192,6 @@ class DetectLaneNode:
             self.pub_debug_lane_center.publish(Float64(data=float(lane_center)))
             self.pub_debug_det_row.publish(Int32(data=self.used_detection_row))
             self.lane_error = msg_error.data
-            print(f"Lane error: {msg_error.data} range [-1,1]")
 
             # saving for debug
             self.img = img

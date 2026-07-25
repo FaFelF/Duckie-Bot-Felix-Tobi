@@ -77,7 +77,7 @@ class SwitchControlNode:
         self.is_intersection_free = True
         self._waiting_on_intersection = False
         self._state_start_time = None
-        self.intersection_wait_time = 3  # seconds, Mindest-Standzeit
+        self.intersection_wait_time = 0.2  # seconds, Mindest-Standzeit
         self.intersection_align_max_time = 6  # seconds, Sicherheits-Obergrenze fürs Ausrichten
 
 
@@ -85,7 +85,6 @@ class SwitchControlNode:
     def cbDuckieDetected(self, msg):
         if msg.data > 0:
             self._control_mode = ControlType.Obstacle
-            print('Duckies detected!')
         else:
             if self._control_mode == ControlType.Obstacle:
                 self._control_mode = ControlType.Lane
@@ -94,8 +93,7 @@ class SwitchControlNode:
 
 
     def cbLaneDetected(self, msg):
-        print('received message')
-        # Write your own code her
+        pass
 
     def _publish_plan_progress(self):
         hop = self._plan_state.current_hop
