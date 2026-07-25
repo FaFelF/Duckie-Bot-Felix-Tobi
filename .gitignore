@@ -5,6 +5,7 @@ __pycache__/
 *.pyc
 logs/
 media/
+.vscode/
 # generierte Lauf-Ausgaben (werden vor jedem roslaunch neu geschrieben)
 # mapped_map.json bleibt getrackt = echtes Mapping-Ergebnis
 src/packages/explore_duckietown_ii/config/plan.json
