@@ -76,7 +76,7 @@ In der VM-GUI ein Terminal öffnen:
 dt-launch-sim
 ```
 
-Im Launcher-Fenster (T2): Nummer von `follow_lane.sh` wählen → läuft.
+Im Launcher-Fenster (T2): Nummer von `explore_duckietown_ii.sh` wählen → läuft.
 
 ### Code geändert, neu testen
 
@@ -98,7 +98,7 @@ Neues Terminal in der VM-GUI:
 ```bash
 dt
 # Auswahl: 2 (Sim)
-rosrun follow_lane configuration_node.py
+rosrun explore_duckietown_ii configuration_node.py
 ```
 
 ### Echter Bot

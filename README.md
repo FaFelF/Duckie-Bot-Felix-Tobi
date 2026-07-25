@@ -30,15 +30,15 @@ source devel/setup.bash
 Run the nodes
 For a single node
 ```
-rosrun follow_lane detect_lane_node.py
+rosrun explore_duckietown_ii detect_lane_node.py
 ```
 For multiple nodes you can write launchers and run them like
 ```
-launchers/follow_lane.sh
+launchers/explore_duckietown_ii.sh
 ```
 
 ## code structure
-This reposistory is formed as a catkin workspace. The code is seprated in packages. The actual code for the DuckieRace challenge is in src/package/follow_lane/src. The package duckietown_msgs contains message definitions for the communication with the nodes running on the duckiebot. 
+This reposistory is formed as a catkin workspace. The code is seprated in packages. The actual code for the DuckieRace challenge is in src/packages/explore_duckietown_ii/src. The package duckietown_msgs contains message definitions for the communication with the nodes running on the duckiebot. 
 
 # Additional Infos
 
@@ -54,7 +54,7 @@ export ROS_IP= *hier IP-Adresse einfügen*
 
 ## Infos bekommen:
 
-rosrun follow_lane configuration_node.py 
+rosrun explore_duckietown_ii configuration_node.py 
 
 
 
