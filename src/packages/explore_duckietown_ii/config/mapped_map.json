@@ -90,7 +90,7 @@
       "node_b": "B",
       "exit_b": 3,
       "gate_tag": null,
-      "travel_time": null
+      "travel_time": 11.798499999999999
     },
     "1": {
       "id": 1,
@@ -99,7 +99,7 @@
       "node_b": "B",
       "exit_b": 2,
       "gate_tag": null,
-      "travel_time": null
+      "travel_time": 14.609
     },
     "2": {
       "id": 2,
@@ -107,8 +107,8 @@
       "exit_a": 4,
       "node_b": "D",
       "exit_b": 2,
-      "gate_tag": null,
-      "travel_time": null
+      "gate_tag": 6,
+      "travel_time": 4.483
     },
     "3": {
       "id": 3,
@@ -116,8 +116,8 @@
       "exit_a": 1,
       "node_b": "C",
       "exit_b": 3,
-      "gate_tag": null,
-      "travel_time": null
+      "gate_tag": 7,
+      "travel_time": 3.848
     },
     "4": {
       "id": 4,
@@ -126,7 +126,7 @@
       "node_b": "E",
       "exit_b": 2,
       "gate_tag": null,
-      "travel_time": null
+      "travel_time": 3.954
     },
     "5": {
       "id": 5,
@@ -135,7 +135,7 @@
       "node_b": "G",
       "exit_b": 2,
       "gate_tag": null,
-      "travel_time": null
+      "travel_time": 35.096
     },
     "6": {
       "id": 6,
@@ -144,7 +144,7 @@
       "node_b": "F",
       "exit_b": 2,
       "gate_tag": null,
-      "travel_time": null
+      "travel_time": 3.737
     },
     "7": {
       "id": 7,
@@ -153,7 +153,7 @@
       "node_b": "E",
       "exit_b": 3,
       "gate_tag": null,
-      "travel_time": null
+      "travel_time": 13.647
     },
     "8": {
       "id": 8,
@@ -161,8 +161,8 @@
       "exit_a": 4,
       "node_b": "H",
       "exit_b": 3,
-      "gate_tag": null,
-      "travel_time": null
+      "gate_tag": 10,
+      "travel_time": 4.046
     },
     "9": {
       "id": 9,
@@ -171,7 +171,7 @@
       "node_b": "F",
       "exit_b": 3,
       "gate_tag": null,
-      "travel_time": null
+      "travel_time": 4.32
     },
     "10": {
       "id": 10,
@@ -179,8 +179,8 @@
       "exit_a": 4,
       "node_b": "H",
       "exit_b": 2,
-      "gate_tag": null,
-      "travel_time": null
+      "gate_tag": 9,
+      "travel_time": 7.015
     },
     "11": {
       "id": 11,
@@ -189,7 +189,7 @@
       "node_b": "G",
       "exit_b": 3,
       "gate_tag": null,
-      "travel_time": null
+      "travel_time": 4.229
     },
     "12": {
       "id": 12,
@@ -198,7 +198,7 @@
       "node_b": "I",
       "exit_b": 3,
       "gate_tag": null,
-      "travel_time": null
+      "travel_time": 6.062
     },
     "13": {
       "id": 13,
@@ -206,8 +206,8 @@
       "exit_a": 4,
       "node_b": "I",
       "exit_b": 2,
-      "gate_tag": null,
-      "travel_time": null
+      "gate_tag": 8,
+      "travel_time": 8.085999999999999
     },
     "14": {
       "id": 14,
@@ -216,7 +216,7 @@
       "node_b": "I",
       "exit_b": 4,
       "gate_tag": null,
-      "travel_time": null
+      "travel_time": 15.04
     }
   }
 }
