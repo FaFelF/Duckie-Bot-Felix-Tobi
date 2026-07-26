@@ -1,12 +1,7 @@
 #!/usr/bin/env python3
 """
-Reine Rendering-Logik fuers Dashboard (siehe dashboard_node.py). Getrennt von
-der ROS-Glue, damit sie ohne rospy lokal testbar ist.
-
-Zeigt in einem Bild:
-  a) die Karte (alle Kanten/Knoten des Graphen),
-  b) den gewaehlten Pfad (Kanten, die im Plan vorkommen, hervorgehoben),
-  c) die aktuelle Position (aktueller Hop, falls step gegeben).
+Rendering-Logik fuers Dashboard (rospy-frei, lokal testbar). Zeigt Karte, geplanten
+Pfad und aktuelle Position in einem Bild.
 """
 
 import math
@@ -55,8 +50,7 @@ def _edge_offset(edge_id: int, edge_groups: Dict[frozenset, List[int]]) -> float
     return 0.0
 
 
-# Farbrollen (BGR). Bewusst wenige, feste Rollen statt bunter Kanten: die Farbe sagt
-# WAS die Kante gerade ist, nicht welche Nummer sie hat.
+# Farbrollen (BGR): die Farbe sagt, WAS die Kante ist (nicht welche Nummer).
 COL_SURFACE      = (32, 30, 28)
 COL_EDGE_OTHER   = (95, 92, 88)     # nicht im Plan -> zuruecknehmen
 COL_EDGE_PATH    = (190, 130, 55)   # im Plan
@@ -100,9 +94,7 @@ def _draw_edge(canvas, edge, layout, edge_groups, color, thickness):
 
 
 def _point_along(pts, dist):
-    """Punkt in `dist` Pixeln Bogenlaenge entlang der Polylinie -- mit Interpolation
-    INNERHALB der Segmente. Nur die Stuetzpunkte abzulaufen reicht nicht: eine gerade
-    Kante hat nur zwei davon, da landet man sofort am anderen Ende."""
+    """Punkt in `dist` Pixeln Bogenlaenge entlang der Polylinie (mit Segment-Interpolation)."""
     acc = 0.0
     for a, b in zip(pts[:-1], pts[1:]):
         seg = float(np.hypot(float(b[0]) - float(a[0]), float(b[1]) - float(a[1])))
@@ -116,11 +108,7 @@ def _point_along(pts, dist):
 
 
 def _departure_point(edge, node_id, layout, edge_groups, dist=52):
-    """
-    Punkt kurz hinter dem Knoten IN Fahrtrichtung dieser Kante -- dorthin kommt die
-    Ausgangsnummer. Ueber die echte Polylinie, damit die Nummer bei gebogenen
-    Parallelkanten auch wirklich am richtigen Ast steht.
-    """
+    """Punkt kurz hinter dem Knoten in Fahrtrichtung der Kante (fuer die Ausgangsnummer)."""
     pts = _edge_points(edge, layout, edge_groups).astype(float)
     if node_id == edge.node_b:
         pts = pts[::-1]
@@ -128,9 +116,8 @@ def _departure_point(edge, node_id, layout, edge_groups, dist=52):
 
 
 def _label_point(edge, layout, edge_groups, shift=16):
-    """Mittelpunkt der Kante, SENKRECHT nach aussen versetzt. Die Richtung folgt dem
-    Bogen-Offset der Kante -- sonst wandern die Labels zweier Parallelkanten beide in
-    dieselbe Richtung und ruecken wieder zusammen, statt sich zu trennen."""
+    """Kanten-Mittelpunkt, senkrecht nach aussen versetzt (Richtung folgt dem Bogen-Offset,
+    damit Parallelkanten-Labels sich trennen)."""
     pts = _edge_points(edge, layout, edge_groups).astype(float)
     total = float(sum(np.hypot(b[0] - a[0], b[1] - a[1]) for a, b in zip(pts[:-1], pts[1:])))
     mx, my = _point_along(pts, total / 2)
@@ -145,14 +132,8 @@ def _label_point(edge, layout, edge_groups, shift=16):
 
 def _exit_label_positions(graph, node_id, layout, edge_groups,
                            radius=64, min_sep_deg=36):
-    """
-    Positionen der Ausgangsnummern rund um eine Kreuzung.
-
-    Nicht einfach ein Punkt auf der Kante: Parallelkanten starten am Knoten praktisch
-    gleich und trennen sich erst in der Mitte -- die Nummern lagen dadurch uebereinander.
-    Stattdessen der WINKEL der Abfahrtsrichtung, auf einem Kreis um den Knoten, und
-    Winkel, die zu dicht beieinander liegen, werden auseinandergeschoben.
-    """
+    """Positionen der Ausgangsnummern rund um eine Kreuzung: nach Abfahrts-WINKEL auf einem
+    Kreis, zu dichte Winkel werden auseinandergeschoben (sonst ueberlappen Parallelkanten)."""
     p0 = to_pixel(layout[node_id])
     items = []
     for exit_no, edge_id in sorted(graph.nodes[node_id].exits.items()):
@@ -187,11 +168,7 @@ def _exit_label_positions(graph, node_id, layout, edge_groups,
 def build_dashboard_image(graph: Graph, plan: List[Hop], step: Optional[int],
                            layout: Dict[str, Tuple[float, float]], run_label: str = "",
                            gate_targets: Optional[dict] = None) -> np.ndarray:
-    """
-    step: roher Plan-Index (PlanState.step) oder None, wenn noch keine Nachricht
-    empfangen wurde (Lauf startet gerade erst). step >= len(plan) heisst "Ziel
-    erreicht" und wird explizit so angezeigt statt einen IndexError zu werfen.
-    """
+    """step: Plan-Index (PlanState.step), None vor dem ersten Update, >= len(plan) = Ziel erreicht."""
     path_edge_ids = {hop.edge_id for hop in plan}
     edge_groups = _group_parallel_edges(graph)
 
@@ -214,8 +191,7 @@ def build_dashboard_image(graph: Graph, plan: List[Hop], step: Optional[int],
             color, thickness = COL_EDGE_OTHER, 2
         mids[edge.id] = _draw_edge(canvas, edge, layout, edge_groups, color, thickness)
 
-    # Ausgangsnummern an den Kreuzungen: zeigen, ueber welche Ausfahrt welche Kante geht.
-    # Ohne die laesst sich der Plan ("Ausgang 3") nicht auf die Karte uebertragen.
+    # Ausgangsnummern an den Kreuzungen (macht "Ausgang 3" im Plan auf der Karte lesbar).
     for node_id in graph.nodes:
         for exit_no, p in _exit_label_positions(graph, node_id, layout, edge_groups).items():
             _chip(canvas, str(exit_no), p, COL_EXIT, scale=0.45)
@@ -227,8 +203,7 @@ def build_dashboard_image(graph: Graph, plan: List[Hop], step: Optional[int],
         if edge.gate_tag is not None:
             label += f" | T{edge.gate_tag}"
             fg = COL_GATE
-        # Gemessene Fahrzeit (aus dem Mapping-Lauf) direkt an der Kante -- danach bewertet
-        # der gate_planner, welcher Weg schneller ist.
+        # Gemessene Fahrzeit an der Kante.
         if edge.travel_time is not None:
             label += f" | {edge.travel_time:.1f}s"
         _chip(canvas, label, _label_point(edge, layout, edge_groups), fg, scale=0.45)
@@ -261,10 +236,7 @@ def build_dashboard_image(graph: Graph, plan: List[Hop], step: Optional[int],
         cv2.putText(panel, f"Lauf: {run_label}", (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
         y += 35
 
-    # 1. Wo der Bot laut Plan gerade ist: Knoten UND ueber welchen Ausgang er ihn
-    #    verlassen hat -- der Ausgang ist noetig, um die Abbiegerichtung nachzuvollziehen.
-    # Vorgegebene Tor-Reihenfolge mit Fortschritt: erledigt (gedimmt), gerade dran
-    # (hervorgehoben), noch offen. Nur beim Torlauf vorhanden.
+    # Vorgegebene Tor-Reihenfolge mit Fortschritt (erledigt/aktuell/offen). Nur beim Torlauf.
     if gate_targets and gate_targets.get('tags'):
         tags = gate_targets['tags']
         hops = gate_targets.get('hops', [])
@@ -301,7 +273,7 @@ def build_dashboard_image(graph: Graph, plan: List[Hop], step: Optional[int],
     cv2.putText(panel, str(node_text), (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 220, 255), 2)
     y += 45
 
-    # 3. Zu welchem Knoten der aktuelle Hop fuehrt (ueber welchen Eingang).
+    # Zielknoten des aktuellen Hops.
     cv2.putText(panel, "Naechster Knoten:", (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
     y += 30
     if current_hop is not None:
@@ -311,8 +283,7 @@ def build_dashboard_image(graph: Graph, plan: List[Hop], step: Optional[int],
     cv2.putText(panel, next_text, (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 255, 140), 2)
     y += 45
 
-    # 2. Richtung, die an der KOMMENDEN Kreuzung gefahren werden muss. Gleiche Rechnung
-    #    wie in PlanState.next_direction(): (Zielausfahrt - Einfahrt) mod 4.
+    # Abbiegerichtung an der kommenden Kreuzung (wie PlanState.next_direction).
     cv2.putText(panel, "Abbiegen an naechster Kreuzung:", (10, y),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
     y += 32
@@ -364,8 +335,7 @@ def build_dashboard_image(graph: Graph, plan: List[Hop], step: Optional[int],
                 cv2.FONT_HERSHEY_SIMPLEX, 0.45, (150, 150, 150), 1)
     y += 40
 
-    # 4. Bisher gemappte Tore: welche Kante hat schon welches Tor-Tag bekommen
-    #    (mapping_recorder_node -> graph.set_gate_tag). Zeigt live den Mapping-Fortschritt.
+    # Bisher gemappte Tore (Mapping-Fortschritt).
     cv2.line(panel, (10, y - 20), (PANEL_WIDTH - 10, y - 20), (80, 80, 80), 1)
     mapped = sorted((e.id, e.gate_tag) for e in graph.edges.values() if e.gate_tag is not None)
     cv2.putText(panel, f"Gemappte Tore: {len(mapped)}/{len(graph.edges)}", (10, y),

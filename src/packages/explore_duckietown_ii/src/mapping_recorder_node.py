@@ -1,21 +1,8 @@
 #!/usr/bin/env python3
 """
-Beobachtet waehrend des Mapping-Laufs die erkannten Tor-AprilTags (5-13) und
-ordnet sie der aktuell befahrenen Kante zu (graph.set_gate_tag). Ergaenzt
-switch_control_node.py, das die aktuelle Kante ueber .../switch/current_edge
-veroeffentlicht (siehe _publish_current_edge dort).
-
-Ablauf:
-  - Waehrend Modus Lane (=1): jede erkannte Tag-ID im Bereich 5-13 wird fuer
-    die aktuell befahrene Kante gezaehlt (Hysterese gegen einzelne
-    Fehl-Detektionen -- siehe gate_tag_voting.pick_confident_tag).
-  - Wechselt die aktuelle Kante (naechster Hop) oder ist der Plan fertig
-    (Modus Stop=3), wird die haeufigste Sichtung der VORHERIGEN Kante als
-    deren gate_tag uebernommen.
-  - Bei Planende (Stop) wird der so vervollstaendigte Graph gespeichert.
-
-Nur fuer den Mapping-Lauf gedacht -- beim Torlauf sind die Tags ja schon
-bekannt, dieser Node muss dort nicht mitlaufen.
+Ordnet waehrend des Mapping-Laufs die gesehenen Tor-AprilTags (5-13) der aktuell
+befahrenen Kante zu (Mehrheit pro Kante, siehe gate_tag_voting) und misst deren
+Fahrzeit. Ergebnis -> mapped_map.json bei Planende. Nur fuer den Mapping-Lauf.
 """
 
 import os
@@ -56,15 +43,11 @@ class MappingRecorderNode:
         self._edge_times = defaultdict(list)  # edge_id -> [gemessene Fahrzeiten (s)]
 
         v = self._vehicle_name
-        # Zugeordnete Tore live melden ("<edge_id>:<tag>"), damit das Dashboard den
-        # Mapping-Fortschritt waehrend der Fahrt zeigen kann. Ohne das saehe es nur die
-        # known_map.json vom Start, in der noch kein Tor eingetragen ist -> immer 0.
-        # latch=True: ein spaeter startendes Dashboard bekommt den letzten Wert noch.
+        # Zugeordnete Tore live ans Dashboard ("<edge_id>:<tag>"). latch: spaete Subscriber
+        # bekommen den letzten Wert noch.
         self.pub_gate_mapped = rospy.Publisher(f'/{v}/mapping/gate_mapped', String,
                                                queue_size=10, latch=True)
-        # Gemittelte Fahrzeit pro Kante live melden ("<edge_id>:<sekunden>"), analog zu
-        # gate_mapped -- das Dashboard zeigt sie an der Kante an. latch=True fuer spaet
-        # startende Subscriber.
+        # Gemittelte Fahrzeit pro Kante live ans Dashboard ("<edge_id>:<sekunden>").
         self.pub_edge_time = rospy.Publisher(f'/{v}/mapping/edge_time', String,
                                              queue_size=10, latch=True)
         rospy.Subscriber(f'/{v}/detect/apriltag', Int32, self.cb_apriltag, queue_size=1)
@@ -87,10 +70,7 @@ class MappingRecorderNode:
             self._current_edge = new_edge
 
     def cb_edge_time(self, msg):
-        """Eine Fahrzeit-Messung von switch_control ("<edge_id>:<sekunden>"). Pro Kante
-        gemittelt (eine Kante kann beim Mapping mehrfach befahren werden, z.B. beim
-        Backtracking) und direkt im Graphen abgelegt -> wird beim Speichern mit
-        geschrieben und dient dem gate_planner spaeter als Weg-Gewicht."""
+        """Fahrzeit-Messung von switch_control, pro Kante gemittelt und im Graphen abgelegt."""
         try:
             edge_str, secs_str = msg.data.split(':')
             edge_id, seconds = int(edge_str), float(secs_str)

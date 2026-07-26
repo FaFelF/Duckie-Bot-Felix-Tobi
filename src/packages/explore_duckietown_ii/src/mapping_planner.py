@@ -1,23 +1,9 @@
 #!/usr/bin/env python3
 """
-Plant eine Fahrroute, die im bekannten Graphen JEDE Kante mindestens einmal
-befaehrt (Mapping-Lauf) -- damit an jeder Kante die dort verbaute Tor-AprilTag-ID
-beobachtet werden kann.
-
-Algorithmus (Edge-Coverage per DFS mit Backtracking):
-  1. An der aktuellen Kreuzung eine noch unbefahrene Kante waehlen (zufaellig bei
-     mehreren Optionen) und darueber fahren.
-  2. Gibt es an der aktuellen Kreuzung keine unbefahrene Kante mehr, zum naechsten
-     Knoten zurueckfahren, der noch eine unbefahrene Kante besitzt -- ueber den
-     kuerzesten bekannten Weg (Kreuzungsanzahl), da die Topologie ja bereits
-     bekannt ist. Dabei incidentell mitbefahrene, bisher unbefahrene Kanten
-     zaehlen ebenfalls als erledigt.
-  3. Wiederholen, bis alle Kanten befahren wurden.
-
-Das ist bewusst kein exaktes Route-Inspection-Problem (kuerzeste GESAMT-Route) --
-der Mapping-Lauf ist laut Aufgabenstellung nicht zeitkritisch, es soll nur nicht
-unnoetig lang gefahren werden. Bei mehreren gleich guten Optionen wird zufaellig
-gewaehlt (siehe Aufgabenstellung).
+Mapping-Plan: Route, die jede Kante mindestens einmal befaehrt (damit jede Tor-ID
+gesehen wird). Edge-Coverage per DFS mit Backtracking; an Sackgassen ueber den
+kuerzesten bekannten Weg zum naechsten Knoten mit unbefahrener Kante. Nicht
+zeitkritisch, bei Gleichstand zufaellige Wahl.
 """
 
 import random
@@ -35,14 +21,8 @@ def _shuffled(items: list, rng: random.Random) -> list:
 
 
 def is_uturn(graph: Graph, node: str, entry_exit: int, edge_id: int) -> bool:
-    """
-    Wuerde das Verlassen von `node` ueber `edge_id` bedeuten, dass der Bot wieder
-    durch die Ausfahrt hinausfaehrt, durch die er hereingekommen ist?
-
-    Der Bot kann an einer Kreuzung nur LINKS, GERADEAUS oder RECHTS -- eine 180-Grad-
-    Wende gibt es als Kommando nicht (relative_direction wirft bei diff==0). Ein Plan
-    mit so einem Uebergang bleibt auf der Strecke haengen, statt nur schlecht zu sein.
-    """
+    """Wuerde das Verlassen ueber `edge_id` eine 180-Grad-Wende bedeuten? Die kann der
+    Bot nicht (nur links/geradeaus/rechts), muss also ausgeschlossen werden."""
     if entry_exit is None:
         return False
     return graph.nodes[node].exits.get(entry_exit) == edge_id
@@ -60,22 +40,13 @@ def shortest_path_edges(graph: Graph, start: str, goal: str,
                          next_edge: Optional[int] = None,
                          weights: Optional[dict] = None) -> List[int]:
     """
-    Kuerzester wendefreier Weg von start zu goal, als Liste von edge_ids.
+    Kuerzester wendefreier Weg start->goal als Liste von edge_ids. Suche laeuft ueber
+    Zustaende (Knoten, Einfahrt), weil Erreichbarkeit von der Einfahrt abhaengt.
 
-    Suche laeuft ueber ZUSTAENDE (Knoten, Einfahrt) statt nur ueber Knoten. Das ist
-    noetig, weil "erreichbar" hier von der Einfahrt abhaengt: derselbe Knoten kann
-    ueber die eine Einfahrt eine Weiterfahrt erlauben und ueber die andere nicht.
-    Eine reine Knoten-Suche findet dann den kurzen Weg, der in eine Wende laeuft, und
-    uebersieht den etwas laengeren, der fahrbar waere.
-
-    entry_exit: Ausfahrt, durch die der Bot an `start` hereingekommen ist.
-    next_edge:  Kante, die NACH dem Weg befahren werden soll -- der Zielzustand muss
-                sie ohne Wende erlauben. Damit kann derselbe Aufruf auch einen Umweg
-                finden, wenn das Ziel direkt auf der Einfahrtskante liegt.
-    weights:    optional edge_id -> Kosten (z.B. gemessene Fahrzeit). Fehlt es, zaehlt
-                jede Kante 1 (= kuerzeste Kreuzungsanzahl wie bisher). Mit Gewichten wird
-                aus der BFS eine Dijkstra-Suche (schnellster statt kuerzester Weg).
-    Bei mehreren gleich guten Wegen wird zufaellig einer gewaehlt.
+    entry_exit: Einfahrt an `start`.
+    next_edge:  Kante nach dem Weg; der Zielzustand muss sie ohne Wende erlauben.
+    weights:    edge_id -> Kosten (Fahrzeit); ohne -> jede Kante 1 (Kreuzungsanzahl).
+    Bei Gleichstand zufaellige Wahl.
     """
     def reached(node: str, ex: Optional[int]) -> bool:
         if node != goal:
@@ -85,10 +56,7 @@ def shortest_path_edges(graph: Graph, start: str, goal: str,
     if reached(start, entry_exit):
         return []
 
-    # Dijkstra ueber (Knoten, Einfahrt). Ziel-Pruefung beim POPPEN (nicht beim Finden),
-    # sonst waere ein spaeter entdeckter, guenstigerer Weg nicht garantiert. rng.random()
-    # als Tie-Break -> bei gleichen Kosten zufaellige Wahl. Ohne weights = Kosten 1 pro
-    # Kante = BFS nach Kreuzungsanzahl.
+    # Dijkstra ueber (Knoten, Einfahrt), Ziel-Pruefung beim Poppen. rng.random() = Tie-Break.
     default = (graph.mean_travel_time() or 1.0) if weights is not None else 1.0
     best = {(start, entry_exit): 0.0}
     heap = [(0.0, rng.random(), start, entry_exit, [])]
@@ -121,10 +89,7 @@ def _has_unvisited_edge(graph: Graph, node: str, unvisited: set) -> bool:
 
 def find_nearest_frontier(graph: Graph, start: str, unvisited: set,
                            rng: random.Random) -> Optional[str]:
-    """
-    Naechster Knoten (per Kreuzungsanzahl von start aus), der noch mindestens
-    eine unbefahrene Kante besitzt. None, wenn keiner mehr existiert.
-    """
+    """Naechster Knoten (per Kreuzungsanzahl) mit noch unbefahrener Kante. None wenn keiner."""
     if _has_unvisited_edge(graph, start, unvisited):
         return start
 
@@ -164,9 +129,7 @@ def build_mapping_plan(graph: Graph, start_node: str, start_exit: int,
     entry_exit = hop.to_exit   # durch diese Ausfahrt sind wir hereingekommen
 
     while unvisited:
-        # Wende ausschliessen: der Bot kann an einer Kreuzung nur links/geradeaus/rechts.
-        # Ohne diese Pruefung waehlte rng.choice u.U. genau die Kante, ueber die er gerade
-        # hereingekommen ist -> Plan mit 180-Grad-Wende -> switch_control bleibt dort haengen.
+        # Wende ausschliessen (Bot kann nur links/geradeaus/rechts).
         candidates = [edge_id for edge_id, _ in graph.neighbors(current)
                       if edge_id in unvisited and not is_uturn(graph, current, entry_exit, edge_id)]
 
@@ -179,16 +142,12 @@ def build_mapping_plan(graph: Graph, start_node: str, start_exit: int,
             entry_exit = hop.to_exit
             continue
 
-        # keine unbefahrene Kante hier -> zum naechsten Knoten mit unbefahrener
-        # Kante zurueckfahren (rein bekannte Kanten, keine neue Tag-Info zu
-        # erwarten, ausser zufaellig unterwegs doch eine unbefahrene Kante
-        # mitgenommen wird -- zaehlt dann ebenfalls als erledigt).
+        # Sackgasse -> zum naechsten Knoten mit unbefahrener Kante zurueckfahren.
         target = find_nearest_frontier(graph, current, unvisited, rng)
         if target is None:
             break  # sollte bei zusammenhaengendem Graphen nie eintreten
 
-        # Auch beim Zurueckfahren keine Wende: entry_exit mitgeben, damit der erste
-        # Schritt des Rueckwegs nicht durch die Einfahrt zurueckgeht.
+        # entry_exit mitgeben, damit auch der Rueckweg keine Wende verlangt.
         for edge_id in shortest_path_edges(graph, current, target, rng, entry_exit):
             hop = graph.hop_from_edge(edge_id, current)
             plan.append(hop)
@@ -200,11 +159,7 @@ def build_mapping_plan(graph: Graph, start_node: str, start_exit: int,
 
 
 def validate_plan(graph: Graph, plan: Plan) -> None:
-    """
-    Prueft, dass der Plan an keiner Kreuzung eine 180-Grad-Wende verlangt. So ein Plan
-    laesst switch_control_node an genau dieser Kreuzung haengen -- besser hier beim
-    Erzeugen auffallen als erst auf der Strecke.
-    """
+    """Prueft, dass der Plan keine 180-Grad-Wende verlangt (die bleibt auf der Strecke haengen)."""
     for i in range(len(plan) - 1):
         if plan[i].to_exit == plan[i + 1].from_exit:
             raise ValueError(

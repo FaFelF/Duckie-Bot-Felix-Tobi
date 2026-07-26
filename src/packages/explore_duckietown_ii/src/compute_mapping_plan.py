@@ -28,13 +28,11 @@ def main():
 
     graph = Graph.load(args.known_map)
     plan = build_mapping_plan(graph, start_node=args.start_node, start_exit=args.start_exit, seed=args.seed)
-    # Lieber hier abbrechen als einen unfahrbaren Plan speichern (Wende -> der Bot
-    # bleibt an der betroffenen Kreuzung haengen).
+    # Lieber hier abbrechen als einen unfahrbaren Plan (mit Wende) speichern.
     validate_plan(graph, plan)
     save_plan(plan, args.output)
 
-    # Ein Mapping-Lauf hat keine vorgegebene Tor-Reihenfolge -> eine Beidatei aus einem
-    # frueheren Torlauf entfernen, sonst zeigt das Dashboard sie weiter an.
+    # Mapping hat keine Tor-Reihenfolge -> altes gate_targets.json entfernen.
     targets_path = os.path.join(os.path.dirname(os.path.abspath(args.output)), 'gate_targets.json')
     if os.path.exists(targets_path):
         os.remove(targets_path)

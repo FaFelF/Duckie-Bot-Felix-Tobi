@@ -29,9 +29,7 @@ class DetectAprilTagNode:
         self.is_running = False
         self.counter = 0
 
-        # "Peak"-Speicher: größtes (= nächstes, zuverlässigstes) sicher erkanntes Schild
-        # der aktuellen Anfahrt. Bleibt erhalten, auch wenn das Schild im Stand nicht mehr
-        # sichtbar ist. Wird nach jeder Kreuzung (intersection_finished) zurückgesetzt.
+        # Groesstes sicher erkanntes Schild der aktuellen Anfahrt (bleibt bis zur naechsten Kreuzung).
         self._peak_area = 0.0
         self._peak_tag_id = -1
         self._approaching = False
@@ -41,10 +39,7 @@ class DetectAprilTagNode:
 
         self.pub_debug_locations_apriltag = rospy.Publisher(f'/{self._vehicle_name}/debug/apriltag_locations', AprilTagDetectionArray, queue_size=1)
 
-        # Kamera-Ausfall-Diagnose: Zeitpunkt des zuletzt empfangenen Bilds. Die Erkennung
-        # laeuft im Kamera-Callback -> faellt die Kamera aus, feuert er nicht mehr und man
-        # merkt es von innen nicht. Ein Watchdog-Timer prueft daher unabhaengig, ob laenger
-        # kein Bild kam. Kein Tag-/Timing-Log mehr, nur noch Ausfaelle.
+        # Watchdog meldet Kamera-Ausfall (der Callback feuert dann nicht mehr).
         self._cam_last = None
         rospy.Timer(rospy.Duration(1.0), self._cam_watchdog)
 
@@ -66,10 +61,7 @@ class DetectAprilTagNode:
         self.apriltag_decode_sharpening = parameters["apriltag"]["decode_sharpening"]["default"]
         self.apriltag_debug             = parameters["apriltag"]["debug"]["default"]
         self.roi_width                  = parameters["roi"]["width"]["default"]
-        # Mindest-Bounding-Box-Flaeche (px^2), ab der ein Schild als "nah genug" gilt.
-        # Ein weit entferntes Schild (z.B. Tor einer Nachbarkante) erscheint klein und wird
-        # verworfen -> beim Mapping wird es nicht faelschlich der gerade befahrenen (evtl.
-        # torlosen) Kante zugeordnet. 0 = Filter aus (altes Verhalten).
+        # Mindest-Schildflaeche (px^2): verwirft zu weit entfernte Schilder. 0 = Filter aus.
         self.min_tag_area               = parameters["detection"]["min_tag_area"]["default"]
 
         self._detector = Detector(
@@ -85,20 +77,17 @@ class DetectAprilTagNode:
     def cbIntersectionApproaching(self, msg):
         self._approaching = msg.data
         if msg.data:
-            # Den während der Anfahrt gemerkten größten Tag speichern (gehalten, auch wenn
-            # das Schild im Stand nicht mehr im Bild ist).
+            # Den waehrend der Anfahrt groessten Tag festhalten.
             self.pub_saved_apriltag.publish(Int32(data=self._peak_tag_id))
 
     def cbIntersectionFinished(self, msg):
-        # Kreuzung abgeschlossen -> Peak für die nächste Kreuzung frisch zurücksetzen,
-        # damit kein Schild von der vorigen Kreuzung "übersteht".
+        # Peak fuer die naechste Kreuzung zuruecksetzen.
         if msg.data:
             self._peak_area = 0.0
             self._peak_tag_id = -1
 
     def _cam_watchdog(self, _event):
-        """Meldet einen LAUFENDEN Kamera-Ausfall: kam laenger als 1 s kein Bild, liefert
-        Kamera/WLAN gerade nichts. Unabhaengig vom Callback, der dann ja nicht mehr feuert."""
+        """Meldet, wenn laenger als 1 s kein Kamerabild kam."""
         if self._cam_last is None:
             return
         age_ms = (rospy.get_time() - self._cam_last) * 1000
@@ -115,8 +104,7 @@ class DetectAprilTagNode:
             msg (CompressedImage): Das empfangene Bild im komprimierten Format
         """
         try:
-            # Frame-Abstand: kam nach einer groesseren Luecke wieder ein Bild, war die Kamera
-            # kurz weg -> einmal melden (der Watchdog meldet den laufenden Ausfall).
+            # Bild nach groesserer Luecke -> Kamera war kurz weg, einmal melden.
             now = rospy.get_time()
             if self._cam_last is not None:
                 gap_ms = (now - self._cam_last) * 1000
@@ -148,17 +136,12 @@ class DetectAprilTagNode:
                     detection.tag_id = tag.tag_id
                     tag_detections.detections.append(detection)
 
-                # NUR sicher dekodierte Tags veroeffentlichen (hamming == 0). hamming > 0
-                # heisst, der Decoder musste Bitfehler korrigieren -- dabei entstehen
-                # verwechselte IDs (z.B. 8 statt 10, wenige Bits Unterschied). Das Mapping
-                # zaehlt diese Sichtungen ab und uebernimmt bei Mehrheit den falschen Tag.
                 def tag_area(t):
                     return (t.corners[:,0].max() - t.corners[:,0].min()) * \
                            (t.corners[:,1].max() - t.corners[:,1].min())
 
-                # Nur sicher dekodierte (hamming==0) UND nah genug (Flaeche >= min_tag_area)
-                # gelten. So faellt ein kleines, weit entferntes Schild raus, statt mangels
-                # nahem Konkurrenten als "largest" durchzugehen (wichtig auf torlosen Kanten).
+                # Nur sicher dekodierte (hamming==0, sonst verwechselte IDs) und nah genug
+                # (Flaeche >= min_tag_area) gelten.
                 confident = [t for t in tags if t.hamming == 0 and tag_area(t) >= self.min_tag_area]
                 if confident:
                     largest = max(confident, key=tag_area)
@@ -166,8 +149,7 @@ class DetectAprilTagNode:
                 else:
                     self.pub_apriltag.publish(-1)
 
-                # Peak aktualisieren: das groesste sicher dekodierte, nah genuge Tag.
-                # Ist es größer als der bisherige Peak -> als bestes Schild der Anfahrt merken.
+                # Peak aktualisieren, falls dieses Schild groesser als das bisher groesste ist.
                 if confident:
                     best = max(confident, key=tag_area)
                     best_area = tag_area(best)

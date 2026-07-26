@@ -37,39 +37,24 @@ class SwitchControlNode:
 
         self.sub_intersection = rospy.Subscriber(f'/{self._vehicle_name}/detect/intersection', Bool, self.cbIntersection, queue_size=1)
 
-        # Plan (Mapping- oder Gate-Lauf, siehe mapping_planner.py/gate_planner.py) legt die
-        # Abbiege-Richtung an jeder Kreuzung vorab fest -- ersetzt die vormals zufaellige Wahl
-        # anhand des Kreuzungstyp-Tags.
-        # latch=True: Subscriber, die erst nach dem Start verbinden (z.B. mapping_recorder_node,
-        # dashboard_node), bekommen den zuletzt veroeffentlichten Wert trotzdem sofort.
-        # current_edge: Kanten-ID (fuer mapping_recorder_node -- Tag-Zuordnung braucht nur
-        #   "welche Kante JETZT", keine Mehrdeutigkeit in Echtzeit).
-        # current_step: roher Plan-Index (fuer's Dashboard -- current_edge allein reicht dort
-        #   nicht, weil dieselbe Kante mehrfach im Plan vorkommen kann, z.B. beim Mapping-
-        #   Backtracking, und "welcher Schritt" dann aus der Kanten-ID nicht eindeutig waere).
+        # current_edge (Kanten-ID fuer mapping_recorder) + current_step (Plan-Index fuers
+        # Dashboard, eindeutig auch bei mehrfach vorkommender Kante). latch fuer spaete Subscriber.
         self.pub_current_edge = rospy.Publisher(f'/{self._vehicle_name}/switch/current_edge', Int32, queue_size=1, latch=True)
         self.pub_current_step = rospy.Publisher(f'/{self._vehicle_name}/switch/current_step', Int32, queue_size=1, latch=True)
-        # Fahrzeit pro Kante messen: Zeit vom Losfahren auf einer Kante bis zur naechsten
-        # Kreuzung ("edge_id:sekunden"). Der mapping_recorder mittelt das und schreibt es
-        # in die Karte -> gate_planner bevorzugt spaeter die schnellere Route.
+        # Fahrzeit pro Kante ("edge_id:sekunden") -> mapping_recorder mittelt fuer die Route-Wahl.
         self.pub_edge_time = rospy.Publisher(f'/{self._vehicle_name}/switch/edge_time', String, queue_size=10)
-        # Start der Fahrt auf der aktuellen Kante. Wird beim Losfahren gesetzt (hier fuer die
-        # Startkante, danach nach jeder Abbiegung) und bei Ankunft an der naechsten Kreuzung
-        # zur Fahrzeit-Messung ausgewertet.
+        # Start der Fahrt auf der aktuellen Kante (fuer die Fahrzeit-Messung).
         self._edge_start_time = rospy.Time.now()
 
-        # Fahr-Modus:
-        #   'plan'       -> Abbiegerichtung kommt aus plan.json (Challenge 4, Mapping/Torlauf).
-        #   'random_tag' -> zufaellige Richtung nach Kreuzungstyp-Tag (Challenge 2), kein Plan.
-        # Default 'plan', damit ein Start ohne Angabe das Challenge-4-Verhalten behaelt.
+        # Fahr-Modus: 'plan' = Richtung aus plan.json (Challenge 4), 'random_tag' = zufaellig
+        # nach Kreuzungstyp-Tag (Challenge 2). Default 'plan'.
         self._direction_mode = rospy.get_param('~direction_mode', 'plan')
         if self._direction_mode == 'plan':
             plan_path = rospy.get_param('~plan_path', os.path.join(os.path.dirname(__file__), '..', 'config', 'plan.json'))
             self._plan_state = PlanState(load_plan(plan_path))
             self._publish_plan_progress()
         else:
-            # Challenge 2: kein Plan; die Richtung kommt zufaellig aus dem Kreuzungstyp-Tag,
-            # das detect_apriltag_node bei der Kreuzungsanfahrt als saved_apriltag festhaelt.
+            # Challenge 2: kein Plan, Richtung kommt zufaellig aus saved_apriltag.
             self._plan_state = None
             self._chosen_direction = IntersectionsDirections.Straight
             self.sub_saved_apriltag = rospy.Subscriber(
@@ -112,13 +97,8 @@ class SwitchControlNode:
 
     def cbChooseDirection(self, msg):
         """
-        Challenge 2 (Modus 'random_tag'): aus dem Kreuzungstyp-Tag die erlaubten Richtungen
-        ableiten und eine davon zufaellig waehlen. Die Wahl wird bei der naechsten erkannten
-        Kreuzung ausgefuehrt (cbIntersection). Nur aktiv, wenn dieser Node im random_tag-Modus
-        laeuft (sonst ist dieser Subscriber gar nicht angelegt).
-
-        Tag-Bedeutung (Kreuzungsform): 1=┼ alle, 2=┴ links/rechts, 3=┤ links/geradeaus,
-        4=├ geradeaus/rechts.
+        Challenge 2: zufaellige Richtung aus den vom Kreuzungstyp-Tag erlaubten waehlen.
+        Tag: 1=┼ alle, 2=┴ links/rechts, 3=┤ links/geradeaus, 4=├ geradeaus/rechts.
         """
         tag_id = msg.data
         if tag_id == 1:      # ┼
@@ -140,8 +120,7 @@ class SwitchControlNode:
         if self.intersection_finished:
             self._control_mode = ControlType.Lane
             self.intersection_finished = False
-            # Abbiegung ausgefuehrt -> im Plan-Modus einen Schritt weiter. Im random_tag-Modus
-            # (Challenge 2) gibt es keinen Plan, dann faehrt er einfach zur naechsten Kreuzung.
+            # Abbiegung ausgefuehrt -> im Plan-Modus einen Schritt weiter (random_tag hat keinen Plan).
             if self._plan_state is not None:
                 self._plan_state.advance()
                 self._publish_plan_progress()
@@ -153,16 +132,10 @@ class SwitchControlNode:
 
     def cbIntersection(self, msg):
         """
-        ROS-Callback, wird aufgerufen wenn detect_intersection_node einen neuen Wert publiziert.
-        Wechselt in den Stop-Modus wenn eine Kreuzung erkannt wird, wartet und fährt dann weiter.
-        Die Abbiege-Richtung kommt je nach Modus aus dem vorab berechneten Plan (Challenge 4,
-        siehe mapping_planner.py/gate_planner.py) oder zufaellig aus dem Kreuzungstyp-Tag
-        (Challenge 2, self._chosen_direction via cbChooseDirection).
+        Bei erkannter Kreuzung ausrichten und abbiegen. Richtung je nach Modus aus dem Plan
+        (Challenge 4) oder zufaellig aus dem Kreuzungstyp-Tag (Challenge 2).
 
         Autor: Felix Faass
-
-        Args:
-            msg (Bool): True wenn roter Streifen erkannt, sonst False
         """
         if self.intersection_running:
             return
@@ -176,16 +149,13 @@ class SwitchControlNode:
         self._intersection_cooldown_start = None
 
         if self._plan_state is not None:
-            # Kante zu Ende gefahren (rote Linie an der naechsten Kreuzung erkannt) -> Fahrzeit
-            # dieser Kante melden. Plan ist hier noch NICHT weitergeschaltet, current_edge_id ist
-            # also die gerade befahrene Kante. Der mapping_recorder mittelt das pro Kante.
+            # Kante zu Ende gefahren -> Fahrzeit melden (Plan noch nicht weitergeschaltet).
             edge_id = self._plan_state.current_edge_id
             if edge_id is not None and self._edge_start_time is not None:
                 elapsed = (rospy.Time.now() - self._edge_start_time).to_sec()
                 self.pub_edge_time.publish(String(data=f"{edge_id}:{elapsed:.3f}"))
 
-            # Letzter Streckenabschnitt des Plans beendet -> Ziel erreicht, keine weitere
-            # Abbiegung vorgesehen. Einfach stoppen statt in Align/Intersection weiterzumachen.
+            # Letzter Hop beendet -> Ziel erreicht, stoppen.
             if self._plan_state.step >= len(self._plan_state.plan) - 1:
                 rospy.loginfo("Plan abgeschlossen -- Ziel erreicht, stoppe.")
                 self._control_mode = ControlType.Stop
@@ -197,8 +167,7 @@ class SwitchControlNode:
         # statt nur stillzustehen. Kostet keine zusätzliche Zeit.
         self._control_mode = ControlType.Align
         self._aligned = False
-        # Richtung: im Plan-Modus aus dem Plan, im random_tag-Modus (Challenge 2) die zuvor
-        # per Kreuzungstyp-Tag zufaellig gewaehlte.
+        # Richtung: aus dem Plan oder (random_tag) die zuvor zufaellig gewaehlte.
         if self._plan_state is not None:
             direction = self._plan_state.next_direction()
         else:

@@ -1,16 +1,10 @@
 #!/usr/bin/env python3
 """
-Graph-Datenstruktur fuer Challenge 4: bekannte Stadt-Topologie (Knoten = Kreuzungen,
-Kanten = Strassenabschnitte), Zuordnung der Tor-AprilTags (5-13) zu Kanten, sowie
-die Uebersetzung eines Fahrplans (Liste von Hops) in konkrete Abbiege-Kommandos.
+Graph-Datenstruktur fuer Challenge 4 (Knoten = Kreuzungen, Kanten = Strassen) plus
+Uebersetzung eines Plans in Abbiege-Kommandos. Rospy-frei, damit lokal testbar.
 
-Die Ausfahrt-Nummerierung an jeder Kreuzung ist fix: 1 und 3 liegen sich gegenueber,
-2 ist rechts von 1, 4 ist links von 1. Fehlende Ausfahrten (T-Kreuzungen) werden als
-None in Node.exits gefuehrt.
-
-Bewusst ohne rospy-Abhaengigkeit: Graph-Aufbau, Planung und Dashboard-Logik sollen
-auch ohne ROS-Umgebung lokal testbar sein. Die Anbindung an switch_control_node.py
-(IntersectionsDirections) erfolgt ueber gleiche numerische Werte in Direction.
+Ausfahrt-Nummerierung fix: 1 und 3 gegenueber, 2 rechts von 1, 4 links von 1.
+Fehlende Ausfahrten (T-Kreuzungen) sind None.
 """
 
 import json
@@ -20,9 +14,7 @@ from typing import Dict, List, Optional, Tuple
 
 
 class Direction(Enum):
-    """Numerisch identisch mit IntersectionsDirections in switch_control_node.py,
-    damit .value direkt auf das bestehende Int32-Topic (switch/intersection_direction)
-    passt."""
+    """Werte identisch mit IntersectionsDirections in switch_control_node.py."""
     Left = 0
     Straight = 1
     Right = 2
@@ -31,8 +23,7 @@ class Direction(Enum):
 @dataclass
 class Node:
     id: str
-    # Ausfahrt-Nr. (1-4) -> edge_id, oder None wenn diese Ausfahrt an dieser
-    # Kreuzung physisch nicht existiert.
+    # Ausfahrt-Nr. (1-4) -> edge_id, None wenn an dieser Kreuzung nicht vorhanden.
     exits: Dict[int, Optional[int]] = field(
         default_factory=lambda: {1: None, 2: None, 3: None, 4: None})
 
@@ -50,8 +41,7 @@ class Edge:
 
 @dataclass
 class Hop:
-    """Eine gerichtete Durchfahrt einer Kante: von from_node/from_exit nach
-    to_node/to_exit. Eine Plan ist eine Liste solcher Hops."""
+    """Eine gerichtete Durchfahrt einer Kante. Ein Plan ist eine Liste solcher Hops."""
     edge_id: int
     from_node: str
     from_exit: int
@@ -68,7 +58,7 @@ class Graph:
         self.edges: Dict[int, Edge] = {}
         self._next_edge_id = 0
 
-    # --- Aufbau (die bekannte Stadt-Topologie wird damit von Hand codiert) ---
+    # --- Aufbau ---
 
     def add_node(self, node_id: str) -> Node:
         if node_id not in self.nodes:
@@ -78,11 +68,7 @@ class Graph:
     def add_edge(self, node_a: str, exit_a: int, node_b: str, exit_b: int,
                  gate_tag: Optional[int] = None,
                  edge_id: Optional[int] = None) -> Edge:
-        """
-        Verbindet zwei Kreuzungen ueber die angegebenen Ausfahrten. Legt Knoten
-        automatisch an, falls sie noch nicht existieren. Wirft einen Fehler,
-        wenn eine Ausfahrt beim Hand-Codieren versehentlich doppelt belegt wird.
-        """
+        """Verbindet zwei Kreuzungen ueber ihre Ausfahrten (Fehler bei Doppelbelegung)."""
         if edge_id is None:
             edge_id = self._next_edge_id
         self._next_edge_id = max(self._next_edge_id, edge_id + 1)
@@ -135,16 +121,12 @@ class Graph:
         self.edges[edge_id].travel_time = seconds
 
     def mean_travel_time(self) -> Optional[float]:
-        """Durchschnitt der gemessenen Kanten-Fahrzeiten -- Fallback-Gewicht fuer
-        Kanten ohne Messung, damit sie beim Planen weder bevorzugt noch gemieden
-        werden. None, wenn noch gar keine Kante gemessen wurde."""
+        """Durchschnitt der gemessenen Fahrzeiten, Fallback-Gewicht fuer ungemessene Kanten."""
         times = [e.travel_time for e in self.edges.values() if e.travel_time is not None]
         return sum(times) / len(times) if times else None
 
     def hop_from_edge(self, edge_id: int, from_node: str) -> Hop:
-        """Baut einen orientierten Hop fuer die Fahrt ueber edge_id, gestartet
-        an from_node. Wird sowohl fuer den Mapping-Plan (Edge-Coverage) als auch
-        fuer den Gate-Plan (BFS-Verkettung zwischen Ziel-Kanten) benutzt."""
+        """Orientierter Hop fuer die Fahrt ueber edge_id, gestartet an from_node."""
         edge = self.edges[edge_id]
         from_exit = edge.exit_a if edge.node_a == from_node else edge.exit_b
         to_node, to_exit = self.other_end(edge_id, from_node)
@@ -183,9 +165,7 @@ class Graph:
 
 
 def save_plan(plan: Plan, path: str) -> None:
-    """Speichert einen fertig berechneten Plan (Mapping- oder Gate-Plan) als JSON,
-    damit ein ROS-Node ihn beim Start laden kann, ohne den Planer erneut laufen
-    zu lassen."""
+    """Speichert den Plan als JSON, damit ein ROS-Node ihn beim Start laden kann."""
     with open(path, "w") as f:
         json.dump([asdict(hop) for hop in plan], f, indent=2)
 
@@ -197,11 +177,7 @@ def load_plan(path: str) -> Plan:
 
 
 def relative_direction(entry_exit: int, target_exit: int) -> Direction:
-    """
-    Uebersetzt Einfahrt- und Zielausfahrt (beide im selben 1-4-Schema derselben
-    Kreuzung) in ein Abbiege-Kommando. diff==0 (Umkehr) darf in einem gueltigen
-    Plan nicht vorkommen.
-    """
+    """Einfahrt + Zielausfahrt -> Abbiege-Kommando. diff==0 (Umkehr) ist ungueltig."""
     diff = (target_exit - entry_exit) % 4
     try:
         return {1: Direction.Right, 2: Direction.Straight, 3: Direction.Left}[diff]
@@ -211,12 +187,8 @@ def relative_direction(entry_exit: int, target_exit: int) -> Direction:
 
 
 class PlanState:
-    """
-    Laufzeit-Zustand beim Abfahren eines Plans (Mapping- oder Torlauf). `step`
-    zeigt auf den Hop, der gerade befahren wird, und ist zugleich die einzige
-    "Positions"-Information, die ohne Hardware-Lokalisierung verfuegbar ist --
-    genau das, was im Dashboard als "wo denkt der Bot dass er ist" angezeigt wird.
-    """
+    """Laufzeit-Zustand beim Abfahren eines Plans. `step` = aktueller Hop = die einzige
+    (symbolische) Positionsinfo ohne Hardware-Lokalisierung."""
 
     def __init__(self, plan: Plan):
         self.plan = plan
@@ -241,11 +213,7 @@ class PlanState:
         return hop.edge_id if hop else None
 
     def next_direction(self) -> Optional[Direction]:
-        """
-        Richtung fuer die Kreuzung am Ende des aktuellen Hops -- die Richtung,
-        die beim naechsten erkannten Kreuzungs-Tag ausgefuehrt werden muss.
-        None, wenn kein weiterer Hop mehr folgt (Ziel erreicht).
-        """
+        """Abbiegerichtung an der Kreuzung am Ende des aktuellen Hops. None am Ziel."""
         if self.finished or self.step + 1 >= len(self.plan):
             return None
         current = self.plan[self.step]
@@ -253,6 +221,5 @@ class PlanState:
         return relative_direction(current.to_exit, upcoming.from_exit)
 
     def advance(self) -> None:
-        """Wird aufgerufen, sobald die Kante des aktuellen Hops durchfahren
-        (und eine evtl. noetige Abbiegung ausgefuehrt) wurde."""
+        """Aufgerufen, sobald der aktuelle Hop durchfahren wurde."""
         self.step += 1

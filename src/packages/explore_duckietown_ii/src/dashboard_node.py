@@ -1,21 +1,9 @@
 #!/usr/bin/env python3
 """
-Dashboard-Node: zeigt live
-  a) die erstellte Karte,
-  b) den gewaehlten Pfad,
-  c) wo der Bot denkt, dass er ist
-(Anforderungen aus der Aufgabenstellung). Reine ROS-Glue -- die eigentliche
-Zeichenlogik steckt in dashboard_render.py (ROS-unabhaengig, lokal testbar).
-
-Positionen der Knoten kommen aus graph_layout.compute_layout (schematisches
-Force-Directed-Layout -- keine geografische Genauigkeit, aber einmalig beim
-Start berechnet und danach fix gehalten, damit das Bild nicht bei jedem Frame
-"zittert").
-
-Die aktuelle Position kommt ueber .../switch/current_step (roher Plan-Index,
-von switch_control_node.py veroeffentlicht) -- NICHT ueber current_edge, weil
-dieselbe Kante mehrfach im Plan vorkommen kann (Mapping-Backtracking,
-Nebenkreuzungen beim Torlauf) und der Schritt daraus sonst mehrdeutig waere.
+ROS-Glue fuers Dashboard (Zeichenlogik in dashboard_render.py). Zeigt Karte, Pfad
+und aktuelle Position. Layout einmalig beim Start (compute_layout), danach fix.
+Position kommt als Plan-Index (current_step), nicht current_edge, weil eine Kante
+mehrfach im Plan vorkommen kann.
 """
 
 import json
@@ -47,8 +35,7 @@ class DashboardNode:
         self.plan = load_plan(plan_path)
         self.layout = compute_layout(self.graph, seed=0)
 
-        # Vorgegebene Tor-Reihenfolge (nur beim Torlauf vorhanden, von compute_gate_plan.py
-        # neben plan.json abgelegt). Fehlt sie -> Mapping-Lauf, dann gibt es keine Vorgabe.
+        # Vorgegebene Tor-Reihenfolge (nur beim Torlauf, neben plan.json abgelegt).
         targets_path = rospy.get_param(
             '~gate_targets_path',
             os.path.join(os.path.dirname(os.path.abspath(plan_path)), 'gate_targets.json'))
@@ -63,14 +50,9 @@ class DashboardNode:
 
         v = self._vehicle_name
         rospy.Subscriber(f'/{v}/switch/current_step', Int32, self.cb_current_step, queue_size=1)
-        # Live-Meldungen des mapping_recorder_node. Ohne die wuerde das Dashboard nur die
-        # beim Start geladene Karte kennen (im Mapping-Lauf known_map.json, dort steht noch
-        # kein Tor drin) und die gemappten Tore immer als 0 anzeigen -- der Recorder haelt
-        # seinen Graphen im Speicher und schreibt ihn erst am Ende in mapped_map.json.
+        # Live gemappte Tore vom mapping_recorder (sonst zeigt das Dashboard bis zum Speichern 0).
         rospy.Subscriber(f'/{v}/mapping/gate_mapped', String, self.cb_gate_mapped, queue_size=10)
-        # Live gemittelte Fahrzeiten pro Kante (nur im Mapping-Lauf gesendet) -- analog zu
-        # gate_mapped, damit das Dashboard sie sofort an der Kante zeigt, statt erst nach
-        # dem Speichern in mapped_map.json.
+        # Live gemittelte Fahrzeiten pro Kante (nur im Mapping-Lauf).
         rospy.Subscriber(f'/{v}/mapping/edge_time', String, self.cb_edge_time, queue_size=10)
         self.pub_dashboard = rospy.Publisher(f'/{v}/debug/dashboard', CompressedImage, queue_size=1)
 
@@ -98,9 +80,7 @@ class DashboardNode:
 
     def run(self):
         rate = rospy.Rate(2)
-        # Fenster immer oeffnen. Vorher hing es hinter DUCKIE_GUI=1 -- das ist wegen der
-        # X11-Probleme aber dauerhaft aus, dadurch war das Dashboard faktisch unsichtbar
-        # (es lief nur als Topic /debug/dashboard).
+        # Fenster immer oeffnen (Anzeige + Topic /debug/dashboard).
         while not rospy.is_shutdown():
             try:
                 img = build_dashboard_image(self.graph, self.plan, self._step, self.layout,

@@ -43,9 +43,7 @@ def main():
         graph, args.tags, start_node=args.start_node, start_exit=args.start_exit, seed=args.seed)
     save_plan(plan, args.output)
 
-    # Vorgegebene Tor-Reihenfolge + zugehoerige Hop-Indizes als Beidatei ablegen. plan.json
-    # selbst bleibt unveraendert (switch_control_node liest es), aber das Dashboard kann so
-    # waehrend der Fahrt zeigen, welche Reihenfolge vorgegeben war und wo man gerade steht.
+    # Tor-Reihenfolge + Hop-Indizes als Beidatei fuer das Dashboard ablegen.
     targets_path = os.path.join(os.path.dirname(os.path.abspath(args.output)), 'gate_targets.json')
     with open(targets_path, 'w') as fh:
         json.dump({'tags': args.tags, 'hops': target_hop_indices}, fh, indent=2)

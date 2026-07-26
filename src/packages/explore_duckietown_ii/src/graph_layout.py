@@ -1,13 +1,8 @@
 #!/usr/bin/env python3
 """
-Berechnet eine schematische 2D-Positionierung der Graph-Knoten fuers Dashboard
-(Fruchterman-Reingold-artiges Force-Directed-Layout). Bewusst KEINE geografische
-Genauigkeit -- die echten Strassen sind teils kurvig/ueber Eck (siehe Parallel-
-kanten wie der lange Bogen zwischen zwei Kreuzungen), ein kompass-basiertes
-Layout wuerde bei solchen Schleifen inkonsistent. Ein schematisches Layout
-(wie ein Metroplan) reicht fuer die Anforderung "Karte anzeigen" voellig aus.
-
-ROS-unabhaengig, nur numpy -- lokal testbar.
+Schematisches 2D-Layout der Graph-Knoten fuers Dashboard (Force-Directed,
+Fruchterman-Reingold). Keine geografische Genauigkeit noetig, wie ein Metroplan.
+Rospy-frei, nur numpy.
 """
 
 from typing import Dict, Tuple

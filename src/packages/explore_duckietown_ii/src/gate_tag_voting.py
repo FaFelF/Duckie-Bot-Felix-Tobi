@@ -10,11 +10,7 @@ from typing import Optional
 
 
 def pick_confident_tag(counts: Counter, min_sightings: int) -> Optional[int]:
-    """
-    Gibt den haeufigst gesehenen Tag zurueck, wenn er mindestens min_sightings
-    mal gesehen wurde. None, wenn gar keine Sichtungen vorliegen (z.B. Kante
-    ohne Tor) oder die haeufigste Sichtung unter der Schwelle bleibt (Rauschen).
-    """
+    """Haeufigst gesehener Tag, wenn er >= min_sightings mal vorkam, sonst None."""
     if not counts:
         return None
     tag, count = counts.most_common(1)[0]

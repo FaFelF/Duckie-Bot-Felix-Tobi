@@ -1,18 +1,8 @@
 #!/usr/bin/env python3
 """
-Plant den Torlauf: eine vorgegebene Reihenfolge von Tor-AprilTag-IDs (5-13) wird
-ueber den (nach dem Mapping-Lauf vollstaendigen) Graphen in eine Fahrroute
-uebersetzt. Diese Phase ist laut Aufgabenstellung zeitkritisch -- der Pfad muss
-algorithmisch aus dem Graphen entstehen (nicht hard-gecodet), soll aber nicht
-zwingend global optimal sein: "kuerzeste Anzahl Kreuzungen zur naechsten
-Graphkante", bei mehreren gleich kurzen Optionen zufaellig gewaehlt.
-
-Pro Ziel-Tag:
-  1. Kante mit diesem gate_tag im Graphen nachschlagen (eindeutig, da jeder Tag
-     nur einmal vorkommt).
-  2. Von der aktuellen Position zum naeheren der beiden Kanten-Enden fahren
-     (kuerzeste Kreuzungsanzahl, Zufallsentscheid bei Gleichstand).
-  3. Die Ziel-Kante selbst durchqueren (das eigentliche Tor).
+Torlauf-Plan: uebersetzt eine vorgegebene Tor-Reihenfolge (Tags 5-13) in eine
+Fahrroute durch den gemappten Graphen. Zeitkritisch -> schnellster Weg zu jedem Tor.
+Pro Ziel-Tag: Kante per gate_tag suchen, wendefrei zu einem Ende fahren, Kante queren.
 """
 
 import random
@@ -26,24 +16,15 @@ def build_gate_plan(graph: Graph, tag_sequence: List[int], start_node: str,
                      start_exit: int, seed: Optional[int] = None
                      ) -> Tuple[Plan, List[int]]:
     """
-    Baut den Torlauf-Plan: Start ueber start_exit an start_node, danach die
-    Tore in tag_sequence in genau dieser Reihenfolge.
-
-    Gibt (plan, target_hop_indices) zurueck: target_hop_indices sind die
-    Indizes in plan, die die BEABSICHTIGTEN Tor-Durchfahrten markieren (in
-    Reihenfolge von tag_sequence). Das ist noetig, weil eine Durchgangsfahrt
-    zwischen zwei Toren zufaellig ueber die Kante eines noch nicht faelligen
-    (oder schon erledigten) Tors fuehren kann -- das zaehlt NICHT als
-    Tor-Durchfahrt, auch wenn die Kante denselben gate_tag traegt.
+    Start ueber start_exit an start_node, dann die Tore in tag_sequence der Reihe nach.
+    Gibt (plan, target_hop_indices) zurueck: die Indizes der BEABSICHTIGTEN Tor-Durchfahrten
+    (eine Transitfahrt kann zufaellig ueber ein anderes Tor fuehren, das zaehlt nicht).
     """
     rng = random.Random(seed)
     plan: Plan = []
     target_hop_indices: List[int] = []
 
-    # Gewichte = gemessene Fahrzeiten (aus dem Mapping-Lauf). Der Torlauf ist zeitkritisch
-    # -> SCHNELLSTEN Weg waehlen, nicht nur kuerzeste Kreuzungsanzahl. Ungemessene Kanten
-    # bekommen in shortest_path_edges den Durchschnitt (neutral). Ohne jede Messung ->
-    # weights=None -> Verhalten exakt wie vorher (Kreuzungsanzahl).
+    # Gewichte = gemessene Fahrzeiten -> schnellster Weg. Ohne Messung None (Kreuzungsanzahl).
     weights = {e.id: e.travel_time for e in graph.edges.values() if e.travel_time is not None}
     weights = weights or None
     default_w = (graph.mean_travel_time() or 1.0) if weights is not None else 1.0
@@ -55,16 +36,11 @@ def build_gate_plan(graph: Graph, tag_sequence: List[int], start_node: str,
     hop = graph.hop_from_edge(first_edge, start_node)
     plan.append(hop)
     current = hop.to_node
-    # Ausfahrt, durch die wir am aktuellen Knoten hereingekommen sind. Noetig, damit kein
-    # Wege-Abschnitt eine 180-Grad-Wende verlangt -- die kann der Bot nicht fahren
-    # (relative_direction kennt nur links/geradeaus/rechts).
+    # Einfahrt am aktuellen Knoten, damit kein Wegabschnitt eine Wende verlangt.
     entry_exit = hop.to_exit
 
-    # Die Startkante kann selbst schon das erste Ziel-Tor tragen (z.B. Start an C ueber
-    # Ausfahrt 4 = Kante mit Tor 9, erstes Ziel ist Tor 9). Dann ist es bereits durchfahren.
-    # Ohne diese Pruefung galt es weiter als offen, und weil ein direktes Zurueck eine
-    # Wende waere, fuhr der Bot erst eine komplette Schleife, um dieselbe Kante nochmal
-    # zu nehmen -- drei ueberfluessige Hops, bevor der Lauf ueberhaupt begann.
+    # Startkante kann schon das erste Ziel-Tor tragen -> dann gilt es als bereits durchfahren
+    # (sonst faehrt der Bot eine unnoetige Schleife, um dieselbe Kante nochmal zu nehmen).
     pending = list(tag_sequence)
     if pending and graph.edges[first_edge].gate_tag == pending[0]:
         target_hop_indices.append(0)
@@ -75,9 +51,7 @@ def build_gate_plan(graph: Graph, tag_sequence: List[int], start_node: str,
         if edge is None:
             raise ValueError(f"Kein Tor mit Tag {tag} im Graphen -- Mapping unvollstaendig?")
 
-        # Zu einem Kanten-Ende fahren, von dem aus das Tor OHNE Wende befahrbar ist.
-        # next_edge=edge.id erledigt beides in einem: die Anfahrt und (falls noetig)
-        # einen Umweg, wenn wir gerade ueber genau diese Kante hereingekommen sind.
+        # Zu einem Kanten-Ende fahren, von dem das Tor wendefrei befahrbar ist (next_edge).
         routes = []
         for endpoint in (edge.node_a, edge.node_b):
             try:
@@ -113,13 +87,8 @@ def build_gate_plan(graph: Graph, tag_sequence: List[int], start_node: str,
 
 def incidental_gate_crossings(plan: Plan, target_hop_indices: List[int],
                                graph: Graph) -> List[Tuple[int, int]]:
-    """
-    Findet Hops, die ein Tor (gate_tag gesetzt) durchqueren, OHNE als
-    beabsichtigte Ziel-Durchfahrt geplant zu sein -- z.B. weil die kuerzeste
-    Verbindung zwischen zwei Toren zufaellig ueber ein drittes Tor fuehrt.
-    Gibt (hop_index, gate_tag) Paare zurueck. Kein Fehler an sich, aber
-    relevant, falls die Streckenwertung jede Tor-Durchquerung einzeln zaehlt.
-    """
+    """Hops, die zufaellig ein Tor queren, ohne beabsichtigte Ziel-Durchfahrt zu sein.
+    Gibt (hop_index, gate_tag) zurueck."""
     target_set = set(target_hop_indices)
     result = []
     for i, hop in enumerate(plan):
