@@ -5,13 +5,13 @@
         "p": {"default": 5.5, "min": 0.0, "max": 10.0},
         "i": {"default": 0.15, "min": 0.0, "max": 10.0},
         "d": {"default": 2.75, "min": 0.0, "max": 10.0},
-        "max_vel": {"default": 0.15, "min": 0.0, "max": 10.0},
+        "max_vel": {"default": 0.34, "min": 0.0, "max": 10.0},
         "speed_curve_factor": {"default": 1.0, "min": 0.0, "max": 5.0},
         "min_speed_factor": {"default": 0.5, "min": 0.0, "max": 1.0}
     },
     "intersection":{
         "sleep_time_left":     {"default": 2.7, "min": 0.0, "max": 5.0},
-        "sleep_time_straight": {"default": 1.0, "min": 0.0, "max": 5.0},
+        "sleep_time_straight": {"default": 1.4, "min": 0.0, "max": 5.0},
         "sleep_time_right":    {"default": 1.0, "min": 0.0, "max": 5.0}
     },
     "align":{
