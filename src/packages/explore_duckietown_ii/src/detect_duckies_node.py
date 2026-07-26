@@ -26,17 +26,10 @@ class DetectDuckiesNode:
         self._crop_im_size = 400
         self.is_running = False
         self.final_duckies = []
-        # Mask-/Detection-Hysterese gegen Aussetzer (bimodale conf): letzte
-        # Erkennung max. _hold_frames Frames weiterverwenden -> gelbe Ente bleibt
-        # maskiert (sonst als Spurlinie erkannt), Ausweichen flackert nicht und
-        # laeuft kurz nach, wenn die Ente seitlich aus dem Bild faehrt.
-        # _hold_frames/_mask_padding/_gap_row_band -> cbUpdateParameters
-        # (wird in util.init_parameters synchron aufgerufen, bevor der Inferenz-Thread startet).
+        # Detection-Hysterese: letzte Erkennung max. _hold_frames Frames halten (gegen Aussetzer).
         self._last_duckies = []
         self._miss_count = 0
-        # Glaettung der Linienpositionen gegen Springen/Verschwinden (verrauschte
-        # center_yellow/white -> zappelnder Korridor -> Flackern): EMA + letzte gute
-        # Position ueber ein paar Miss-Frames halten, statt auf den Bildrand zu springen.
+        # Linienglaettung: EMA + letzte gute Position halten (gegen Springen/Flackern).
         self._line_smooth_alpha = 0.4   # 0..1: hoeher = reaktiver, niedriger = glatter
         self._line_hold_frames = 5      # so viele Miss-Frames die letzte Position halten
         self._line_state = {'white': {'val': None, 'miss': 0},
@@ -44,25 +37,18 @@ class DetectDuckiesNode:
         self._last_inference_time = None
         self.min_inference_interval = 0.5
         self.image_middle = 320
-        # STATISCHE Spur-Referenz (einmal aus dem Referenzbild gemessen): die Innenkanten
-        # der gelben Linien als zwei Geraden x = a*y + b. Der Innenabstand = Bot-Breite +
-        # Toleranz -> Maßstab "passt der Bot durch?" pro Zeile, ohne Kalibrierung.
+        # Statische Spur-Referenz (aus Referenzbild): Innenkanten als Geraden x = a*y + b.
+        # Innenabstand = Bot-Breite -> Maßstab "passt der Bot durch?" pro Zeile.
         self._ref_aL, self._ref_bL = -0.595, 395.3   # linke Innenkante
         self._ref_aR, self._ref_bR = 0.582, 242.8    # rechte Innenkante
         self._ref_y0, self._ref_y1 = 215, 460        # gueltiger Zeilenbereich
-        # WICHTIG (Kalibrierungsbild): die gelben Baender kleben knapp AUSSERHALB der
-        # Reifen - lane_px IST also bereits die ueberstrichene Bot-Breite inkl. Reifen
-        # (+ ~0.5 cm je Seite). Deshalb 1:1 verwenden, KEIN zusaetzlicher Faktor. Ein
-        # frueherer Faktor 0.85 machte das Fahrband ~15% zu schmal -> Reifen traf Enten.
+        # lane_px = ueberstrichene Bot-Breite inkl. Reifen -> 1:1 verwenden, kein Zusatzfaktor.
         self.center_white = None
         self.center_yellow = None
-        # valid=True: Linie wurde wirklich gesehen (oder kurz gehalten); False: nur
-        # Rand-Fallback -> nicht als echte Grenze fuer die Fehler-/Luecken-Rechnung nehmen.
+        # valid=True: Linie echt gesehen; False: nur Rand-Fallback (nicht als Grenze nutzen).
         self.white_valid = False
         self.yellow_valid = False
-        # Streckenbreite als Vielfaches der Spurbreite, gemessen wo beide Linien echt sind.
-        # Damit laesst sich die Fahrlinie aus EINER echten Linie rekonstruieren, statt auf
-        # einen Rand-Fallback hereinzufallen.
+        # Streckenbreite / Spurbreite -> Fahrlinie aus EINER echten Linie rekonstruierbar.
         self._track_width_ratio = None
         self.debug_cv_image = None
         self.debug_largest_gap = None
@@ -94,9 +80,7 @@ class DetectDuckiesNode:
         self.model = '/root/DuckieRace/src/packages/explore_duckietown_ii/models/duckie_v19.onnx'
 
         
-        # GPU bevorzugen, CPU als Fallback. cudnn_conv_algo_search=HEURISTIC verhindert
-        # die langsame, erschoepfende Kernel-Suche beim ERSTEN Lauf (sonst dauert die
-        # erste Inferenz teils ~30s -> Boxen erst, nachdem der Bot schon faehrt).
+        # GPU mit CPU-Fallback; HEURISTIC vermeidet die ~30s Kernel-Suche beim ersten Lauf.
         self.session = ort.InferenceSession(
             self.model,
             providers=[
@@ -113,9 +97,7 @@ class DetectDuckiesNode:
                 "Verfuegbar: %s", active_providers, ort.get_available_providers())
         self.input_name = self.session.get_inputs()[0].name
 
-        # GPU-Warmup beim Start: erste CUDA-Inferenz richtet Kernel ein. Einmal mit
-        # Dummy-Bild durchlaufen, damit die erste ECHTE Erkennung sofort schnell ist
-        # und die Boxen nicht erst nach Sekunden (nach dem Losfahren) kommen.
+        # GPU-Warmup: erste Inferenz mit Dummy-Bild, damit die echte sofort schnell ist.
         try:
             rospy.loginfo("[detect_duckies] GPU warmup...")
             _t0 = time.time()
@@ -132,9 +114,7 @@ class DetectDuckiesNode:
         self.pub_duckie_blocked = rospy.Publisher(f'/{self._vehicle_name}/detect/duckie_blocked', Bool, queue_size=1)
         # Drehrichtung fuer den Pivot: +1 = links, -1 = rechts (weg von der naechsten Linie)
         self.pub_duckie_pivot_dir = rospy.Publisher(f'/{self._vehicle_name}/detect/duckie_pivot_dir', Int32, queue_size=1)
-        # Seite, auf der eine NAHE Ente steht: +1 = links, -1 = rechts, 0 = keine.
-        # Verschwindet sie, steht sie noch seitlich neben dem Bot -> control_lane sperrt
-        # kurz das Lenken in diese Richtung (sonst streift er sie).
+        # Seite einer nahen Ente (+1 links, -1 rechts, 0 keine): control_lane sperrt kurz das Lenken dorthin.
         self.pub_duckie_side = rospy.Publisher(f'/{self._vehicle_name}/detect/duckie_side', Int32, queue_size=1)
         self.pub_duckie_distance_factor = rospy.Publisher(f'/{self._vehicle_name}/detect/duckie_distance_factor', Float64, queue_size=1)
         self.pub_duckies = rospy.Publisher(f'/{self._vehicle_name}/detect/duckies', Bool, queue_size=1)
@@ -162,10 +142,7 @@ class DetectDuckiesNode:
         self.bottom_right_y = parameters["crop_image"]["bottom_right_y"]["default"]
 
         self.duckie_enabled = bool(parameters["detection"]["enabled"]["default"])
-        # duckie_only: NUR Enten-Modus. detect_duckies liefert dann DURCHGEHEND ein Ziel und
-        # haelt control_active=True -> switch_control bleibt dauerhaft auf Obstacle, faellt
-        # nie auf Lane zurueck, und Kreuzungen triggern nicht (die brauchen den Lane-Modus).
-        # Fuer die isolierte Ausweich-Challenge. 0 = normales Umschalten wie bisher.
+        # duckie_only: NUR Enten-Modus (durchgehend Ziel, control_active=True, keine Kreuzungen).
         self.duckie_only = bool(parameters["detection"]["duckie_only"]["default"])
         self.threshold_Duckie = parameters["detection"]["threshold"]["default"]
 
@@ -186,25 +163,18 @@ class DetectDuckiesNode:
         self.conf_threshold = parameters["detection"]["conf_threshold"]["default"]
         self.duckie_distance_min = parameters["detection"]["distance_min"]["default"]
         self.duckie_distance_max = parameters["detection"]["distance_max"]["default"]
-        # Hysterese: wie viele Miss-Frames die letzte Erkennung gehalten wird (Nachlauf
-        # bei seitlich verschwindender Ente) + Padding fuers Maskieren.
+        # Hysterese: Miss-Frames halten + Padding fuers Maskieren.
         self._hold_frames = int(parameters["detection"]["hold_frames"]["default"])
         self._mask_padding = int(parameters["detection"]["mask_padding"]["default"])
-        # Mehr-Enten-Luckensuche: Mindestbreite einer Luecke in px (~Bot-Breite) und
-        # vertikale Toleranz, welche Enten die Detektions-Zeile blockieren.
+        # Luecken-Suche: Mindestbreite (px) und vertikale Toleranz fuer blockierende Enten.
         self._gap_row_band = int(parameters["detection"]["gap_row_band"]["default"])
-        # Ab dieser Naehe gilt eine Ente als "gleich seitlich neben mir" -> ihre Seite
-        # wird gemeldet, damit control_lane nach dem Vorbeifahren nicht dorthin lenkt.
+        # Ab dieser Naehe gilt eine Ente als "seitlich neben mir" -> Seite melden.
         self._pass_side_min_factor = parameters["detection"]["pass_side_min_factor"]["default"]
-        # Horizont-Zeile fuer die Linien-Suche: alles darueber (Waende/Moebel = fast alles
-        # "weiss") wird aus den Masken geschnitten. Default = distance_min-Bereich.
+        # Horizont-Zeile: alles darueber (Waende = "weiss") aus den Masken schneiden.
         self._lane_roi_top = int(parameters["detection"]["lane_roi_top"]["default"])
-        # Wie stark auf die Luecke zugesteuert wird, relativ zur Spurmitte. Trennt die
-        # Ausweich-Schaerfe vom Linienfahren, das durch dieselben pid_duckie-Gains laeuft.
-        # 1.0 = voll auf die Lueckenmitte (altes Verhalten), 0.5 = halb so weit raus.
+        # _avoid_gain: wie stark auf die Luecke zugesteuert wird (1.0 = voll, 0.5 = halb).
         self._avoid_gain = parameters["detection"]["avoid_gain"]["default"]
-        # Sperrzone: ab dieser Bildzeile (y2 der Ente) ist sie zu nah fuers PID-Ausweichen
-        # -> Pivot. Kleiner = Zone beginnt weiter oben = frueher pivotieren.
+        # Sperrzone: ab dieser Zeile (y2) ist die Ente zu nah fuers PID-Ausweichen -> Pivot.
         self._blocked_zone_top = int(parameters["detection"]["blocked_zone_top"]["default"])
         # Ab so vielen Linien-Pixeln im Fahrband gilt eine Linie als "quer im Weg".
         self._line_min_px = int(parameters["detection"]["line_min_px"]["default"])
@@ -238,9 +208,7 @@ class DetectDuckiesNode:
         return cv2.warpPerspective(img,M,(self._crop_im_size,self._crop_im_size))    
 
     def cbFindDuckies(self, image_msg):
-        # Schalter (detection.enabled, live umschaltbar): Duckie-Modus aus -> nichts
-        # verarbeiten, Obstacle-Modus freigeben -> switch_control bleibt auf Lane und der
-        # Bot faehrt normal Spur. Fuer die isolierte "Challenge startet jetzt"-Aufgabe.
+        # detection.enabled aus -> nichts verarbeiten, Bot faehrt normal Spur.
         if not self.duckie_enabled:
             self.pub_duckie_control_active.publish(Bool(data=False))
             self.pub_duckies.publish(Bool(data=False))
@@ -254,10 +222,7 @@ class DetectDuckiesNode:
             self.debug_largest_gap = None
             self.debug_blocked = False
             return
-        # Zeitpunkt des letzten EMPFANGENEN Kamerabilds -> im Inferenz-Log als cam_age.
-        # Ist bei einem grossen gap cam_age auch gross -> Kamera/WLAN liefert nichts
-        # (Loop schlaeft). Ist cam_age klein -> Bilder kamen an, der Loop war blockiert
-        # (z.B. cv2.imshow ueber X11 haelt den GIL). Trennt die beiden Ausfall-Ursachen.
+        # Zeit des letzten Kamerabilds (fuer die cam_age-Ausfalldiagnose im Inferenz-Log).
         self._cam_last = time.time()
         np_arr = np.frombuffer(image_msg.data, np.uint8)
         cv_image = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
@@ -287,8 +252,7 @@ class DetectDuckiesNode:
 
                 self.fnDetectDuckies(img)
 
-                # Detection-Hysterese: verliert das Modell die Ente fuer wenige
-                # Frames, halten wir die letzte Erkennung weiter (siehe __init__).
+                # Detection-Hysterese: kurze Aussetzer mit der letzten Erkennung ueberbruecken.
                 if self.final_duckies:
                     self._last_duckies = self.final_duckies
                     self._miss_count = 0
@@ -312,10 +276,7 @@ class DetectDuckiesNode:
                     if lowest_duckie is None or duckie[3] > lowest_duckie[3]:
                         lowest_duckie = duckie
 
-                # Seite einer NAHEN Ente melden - bewusst ueber ALLE Enten, nicht nur die
-                # im Fahrkorridor: eine nahe Ente neben dem Bot ist physisch neben ihm,
-                # egal ob sie in der Spur steht. Verschwindet sie gleich aus dem Bild
-                # (weil sie neben dem Bot ist), sperrt control_lane kurz das Lenken dorthin.
+                # Seite einer nahen Ente (ueber ALLE Enten, nicht nur im Korridor) -> Lenk-Sperre.
                 side = 0
                 if lowest_duckie is not None:
                     rng = max(1, self.duckie_distance_max - self.duckie_distance_min)
@@ -332,27 +293,18 @@ class DetectDuckiesNode:
                 # (Vorher fiel die Ente bei y2>distance_max aus dem Bereich -> Bremse/Lenkung
                 # aus -> Bot kroch in die Ente.)
                 if lowest_duckie is not None and lowest_duckie[3] >= self.duckie_distance_min:
-                    # Spurlinien an der Zeile der (vorlaeufig) naechsten Ente bestimmen,
-                    # damit wir center_yellow zum Filtern kennen.
+                    # Spurlinien an der Zeile der naechsten Ente bestimmen (center_yellow zum Filtern).
                     hsv[duckie_mask == 255] = 0
                     self.fnDetectLane(hsv, lowest_duckie[3])
 
-                    # Enten LINKS der gelben Linie ignorieren: liegt die rechte Kante (x2)
-                    # links von center_yellow, ist die Ente ausserhalb der Spur -> raus,
-                    # auch fuer die Wahl der naechsten Ente / distance_factor (nicht nur in
-                    # der Luecken-Rechnung). Steht sie AUF der Linie (x2 >= center_yellow),
-                    # bleibt sie drin. (Bei ungueltiger gelber Linie -> spaeter ueber das
-                    # Gueltigkeits-Flag, Stufe C; hier greift der aktuelle center_yellow.)
+                    # Enten links der gelben Linie (x2 < center_yellow) sind ausserhalb der Spur -> raus.
                     if self.center_yellow is not None:
                         relevant = [d for d in active_duckies if max(d[0], d[2]) >= self.center_yellow]
                     else:
                         relevant = active_duckies
 
-                    # Referenz-Ente = die naechste Ente IM FAHRWEG, nicht die naechste
-                    # ueberhaupt. Sonst bestimmt eine Ente, die nur seitlich danebensteht,
-                    # die Referenzzeile - und die echte Gefahr in anderer Tiefe faellt aus
-                    # der Luecken-Rechnung raus (genau der "um die eine rum, die andere
-                    # umgefahren"-Fall). Jede Ente wird an IHRER eigenen Zeile geprueft.
+                    # Referenz-Ente = naechste Ente IM Fahrweg (nicht die naechste ueberhaupt),
+                    # jede an ihrer eigenen Zeile geprueft.
                     threats = [d for d in relevant if self._duck_in_path(d)]
                     lowest_relevant = None
                     for duckie in (threats or relevant):
@@ -365,19 +317,13 @@ class DetectDuckiesNode:
                         distance_factor = max(0.0, min(1.0, distance_factor))
                         self.pub_duckie_distance_factor.publish(Float64(data=distance_factor))
 
-                        # stop=True nur, wenn der Korridor KOMPLETT zu ist (gar keine
-                        # Luecke). Rein horizontal, kein distance_factor mehr -> ferne
-                        # Enten am Horizont loesen keinen Stopp mehr aus (die filtert
-                        # distance_min raus, wenn noetig).
+                        # blocked=True nur, wenn der Korridor komplett zu ist (keine Luecke).
                         duckie_error, blocked = self.fnGetLaneDuckieError(relevant, int(lowest_relevant[3]))
                         self.debug_duckie_error = duckie_error
                         self.debug_lowest_duckie = lowest_relevant
                         self.debug_blocked = blocked
 
-                        # DIAGNOSE (nur bei naher Ente, gedrosselt): zeigt genau, an welchem
-                        # Tor eine Ente rausfaellt - Erkennung / distance_min / relevant /
-                        # Fahrband. Bei "ueberfahren ohne Reaktion" ist inpath=False der
-                        # Verdaechtige (Fahrband ist geradeaus, Bot faehrt aber Kurve).
+                        # Diagnose bei naher Ente (gedrosselt): wo faellt eine Ente aus der Rechnung?
                         if distance_factor >= 0.5:
                             lx1, _, lx2, ly2, lconf = lowest_relevant
                             bw = self._lane_px(ly2)
@@ -397,15 +343,11 @@ class DetectDuckiesNode:
                                 len(active_duckies), len(relevant), len(threats),
                                 ("%.3f" % duckie_error) if duckie_error is not None else "None", blocked)
                         if duckie_error is not None:
-                            # Ente im Weg (ausweichen ODER kein Durchkommen): Control aktiv
-                            # lassen, damit der Bot NICHT auf Lane zurueckfaellt und reinfaehrt.
+                            # Ente im Weg: Control aktiv lassen, damit der Bot nicht auf Lane zurueckfaellt.
                             self.pub_duckie_error.publish(Float64(data=duckie_error))
                             self.pub_duckie_blocked.publish(Bool(data=blocked))
                             if blocked:
-                                # kein Durchkommen -> Drehrichtung mitgeben. Loeste eine
-                                # quer liegende LINIE den Pivot aus, gilt deren Richtung
-                                # (weg von ihr); sonst weg von der naeheren Linie bzw. von
-                                # der Ente (threats).
+                                # kein Durchkommen -> Pivot-Richtung: weg von der Quer-Linie, sonst von der Ente.
                                 ld, lclose = self._line_in_path()
                                 pdir = (ld if (lclose and ld != 0)
                                         else self._pivot_direction(threats))
@@ -436,9 +378,7 @@ class DetectDuckiesNode:
                     self.debug_lowest_duckie = None
                     self.pub_duckie_distance_factor.publish(Float64(data=0.0))
                     if self.duckie_only:
-                        # Enten-Modus bleibt -> Spur selbst fahren. fnDetectLane lief hier
-                        # noch nicht, also einmal an einer festen Zeile mitten im gueltigen
-                        # Referenzbereich nachziehen.
+                        # Enten-Modus ohne Ente -> Spur selbst fahren (fnDetectLane an fester Zeile).
                         hsv[duckie_mask == 255] = 0
                         self.fnDetectLane(hsv, int((self._ref_y0 + self._ref_y1) / 2))
                         self._publish_lane_follow()
@@ -463,12 +403,8 @@ class DetectDuckiesNode:
         """
 
 
-        # WICHTIG: Ergebnis lokal sammeln und erst am Ende ATOMAR zuweisen. Vorher wurde
-        # self.final_duckies gleich zu Beginn geleert und erst nach der Inferenz wieder
-        # gefuellt -> die Liste war waehrend der ~15 ms Inferenz LEER. run_debug liest sie
-        # aus einem anderen Thread und malte dann keine Box, obwohl die Ente sauber erkannt
-        # war (bei 30 fps Kamera grob jedes zweite Debug-Bild). Reines Anzeige-Artefakt, die
-        # Regelung war nie betroffen (liest im selben Thread nach der Inferenz + Hysterese).
+        # Ergebnis lokal sammeln und erst am Ende ATOMAR zuweisen (sonst liest der Debug-Thread
+        # waehrend der Inferenz eine leere Liste).
         found = []
 
         now = time.time()
@@ -480,17 +416,14 @@ class DetectDuckiesNode:
         detections = raw_output[0][0]
 
         max_conf = max((box[4] for box in detections), default=0)
-        # Inferenz-Timing: reine Rechenzeit (inference_ms) + Abstand zum letzten Lauf
-        # (gap_ms, = 1000/Hz -> effektive Rate). loginfo (kein print) -> mit Zeitstempel,
-        # gedrosselt auf 1/s, damit es das Terminal nicht flutet.
+        # Inferenz-Timing: Rechenzeit + Abstand zum letzten Lauf (= Rate), gedrosselt auf 1/s.
         hz = 1000.0 / gap_ms if gap_ms > 0 else 0.0
         cam_age_ms = (now - self._cam_last) * 1000 if self._cam_last else -1
         rospy.loginfo_throttle(
             1.0,
             f"Duckie detect: inference={inference_ms:4.0f}ms | gap={gap_ms:5.0f}ms "
             f"({hz:4.1f} Hz) | cam_age={cam_age_ms:4.0f}ms | max_conf={max_conf:.2f} thr={self.conf_threshold}")
-        # Aussetzer klar melden: grosser gap trotz frischer Kamerabilder -> Loop war
-        # blockiert (X11/GIL), nicht die Kamera.
+        # Grosser gap trotz frischer Bilder -> Loop war blockiert (X11/GIL), nicht die Kamera.
         if gap_ms > 500:
             rospy.logwarn("[duckie] AUSSETZER: gap=%.0fms, cam_age=%.0fms -> %s",
                           gap_ms, cam_age_ms,
@@ -545,9 +478,8 @@ class DetectDuckiesNode:
             return None
 
     def _smooth_line(self, name, raw, fallback):
-        """Glaettet eine Linienposition (EMA) und haelt die letzte gute Position fuer
-        ein paar Miss-Frames, statt bei Nicht-Erkennung auf den Bildrand zu springen.
-        Rueckgabe: (wert, valide). valide=False = nur Rand-Fallback (nicht gesehen)."""
+        """Glaettet eine Linienposition (EMA) und haelt sie ueber ein paar Miss-Frames.
+        Rueckgabe: (wert, valide); valide=False = nur Rand-Fallback."""
         s = self._line_state[name]
         if raw is not None:
             s['val'] = float(raw) if s['val'] is None else (
@@ -571,9 +503,7 @@ class DetectDuckiesNode:
                                (self.hue_white_l,self.saturation_white_l, self.lightness_white_l),
                                (self.hue_white_h,self.saturation_white_h, self.lightness_white_h),)
 
-        # ROI: alles OBERHALB der Horizont-Zeile wegschneiden. Ueber dem Boden sind Waende,
-        # Moebel und Fenster fast komplett "weiss" -> ohne Crop kann get_x_for_driving eine
-        # Wand als Fahrbahnrand nehmen (es sucht in row +- 50, reicht also nach oben).
+        # ROI: oberhalb der Horizont-Zeile wegschneiden (sonst nimmt get_x_for_driving eine Wand als Rand).
         top = max(0, int(self._lane_roi_top))
         if top > 0:
             mask_yellow[:top, :] = 0
@@ -583,16 +513,14 @@ class DetectDuckiesNode:
         white_alternative = int(len(hsv[0]) * 0.95)
         yellow_alternative = int(len(hsv[0]) * 0.05)
 
-        # Fuers Masken-Debugfenster merken: GENAU die Masken, mit denen hier gesucht wird
-        # (inkl. ausmaskierter Enten), nicht neu gerechnete.
+        # Fuers Debugfenster: genau die hier benutzten Masken merken.
         self.debug_mask_yellow = mask_yellow
         self.debug_mask_white = mask_white
         self.debug_lane_row = distance
 
         raw_white = self.get_x_for_driving(mask_white, distance, left_line=False)
         raw_yellow = self.get_x_for_driving(mask_yellow, distance, left_line=True)
-        # Glaetten + letzte gute Position halten -> stabile Linien (ruhiger Korridor/PID).
-        # Zusaetzlich merken, ob die Linie echt gesehen wurde (valid) oder nur Fallback.
+        # Glaetten + valid-Flag (echt gesehen vs. Fallback).
         self.center_white, self.white_valid = self._smooth_line('white', raw_white, white_alternative)
         self.center_yellow, self.yellow_valid = self._smooth_line('yellow', raw_yellow, yellow_alternative)
 
@@ -612,16 +540,11 @@ class DetectDuckiesNode:
         return n
 
     def _line_in_path(self):
-        """Liegt LINIENFARBE im Fahrband? Faengt den Fall ab, dass der Bot senkrecht auf
-        eine Linie zufaehrt: get_x_for_driving nutzt Sobel in x-Richtung und sieht deshalb
-        nur SENKRECHTE Kanten - eine quer liegende Linie ist dafuer unsichtbar (isoliert
-        getestet: 0 von 100 Zeilen). Der Bot faehrt dann einfach drueber. Farbe im Band zu
-        zaehlen ist dagegen orientierungsunabhaengig.
+        """Liegt Linienfarbe im Fahrband? Faengt quer zulaufende Linien ab, die der
+        Sobel-Gradient (nur senkrechte Kanten) uebersieht.
 
-        Rueckgabe (richtung, nah):
-          richtung: +1 = nach links lenken (weisse Linie im Weg), -1 = nach rechts (gelbe),
-                    0 = frei. Also immer WEG von der Linie.
-          nah:      True, wenn die Linie in der Sperrzone liegt -> Pivot statt lenken.
+        Rueckgabe (richtung, nah): richtung +1=links / -1=rechts / 0=frei (weg von der Linie);
+        nah=True wenn die Linie in der Sperrzone liegt -> Pivot.
 
         Autor: Felix Faass
         """
@@ -648,28 +571,15 @@ class DetectDuckiesNode:
         return target - d * self._line_push * self._lane_px(row)
 
     def _lane_center(self, row):
-        """Fahrlinie (Bild-x) an Zeile row, ohne sich auf einen Fallback zu verlassen.
+        """Fahrlinie (Bild-x) an Zeile row. Wo beide Linien echt sind, wird die Streckenbreite
+        als Vielfaches der Spurbreite gelernt (_track_width_ratio), um die Mitte aus EINER
+        echten Linie zu rekonstruieren, statt auf einen Rand-Fallback hereinzufallen.
 
-        (gelb+weiss)/2 ist nur brauchbar, wenn BEIDE Linien echt gesehen wurden. Faellt
-        Gelb auf seinen Rand-Fallback (bei uns staendig), zieht das die "Mitte" nach
-        aussen und der Bot verlaesst die Strecke.
-
-        Stattdessen: wo beide Linien echt sind, wird die Streckenbreite als VIELFACHES der
-        Spurbreite gemessen (_track_width_ratio = (weiss-gelb)/lane_px). Dieses Verhaeltnis
-        ist perspektivfrei (beides skaliert gleich mit der Zeile) und physisch konstant ->
-        faellt eine Linie weg, laesst sich die Mitte aus der verbliebenen ECHTEN Linie
-        rekonstruieren. Das ist die white_offset-Idee, nur mit gemessener statt geratener
-        Breite.
-
-        WICHTIG - Rueckfall-Kette, NIE "geradeaus":
-          1. beide Linien echt      -> (gelb+weiss)/2  (+ Verhaeltnis lernen)
-          2. eine echt + gelernt    -> aus der echten Linie rekonstruiert
-          3. sonst, Linien bekannt  -> (gelb+weiss)/2 aus dem, was da ist (verzerrt, wenn
-             eine ein Fallback ist - aber er reagiert wenigstens, statt stur geradeaus)
-          4. gar keine Linien       -> None
-        Punkt 3 ist der Grund, warum das hier ueberhaupt existiert: ohne ihn lieferte die
-        Funktion None, der Aufrufer machte daraus err=0.0 und der Bot ignorierte die weisse
-        Linie komplett. Ein verzerrtes Ziel ist besser als gar keins.
+        Rueckfall-Kette (nie "geradeaus"):
+          1. beide echt     -> (gelb+weiss)/2 (+ Verhaeltnis lernen)
+          2. eine + gelernt -> aus der echten Linie rekonstruiert
+          3. sonst          -> (gelb+weiss)/2 aus dem, was da ist (verzerrt, aber reagiert)
+          4. keine Linien   -> None
 
         Autor: Felix Faass
         """
@@ -709,16 +619,12 @@ class DetectDuckiesNode:
         return (self.image_middle - target) / float(max(1, self.image_middle))
 
     def _publish_lane_follow(self):
-        """duckie_only: kein Ausweichen noetig -> trotzdem SELBST der Spur folgen und
-        control_active aktiv lassen. So faellt switch_control nie aus dem Enten-Modus raus
-        (kein Lane/Kreuzung/Align) und es gibt kein Lane<->Obstacle-Flackern.
-        Setzt voraus, dass fnDetectLane vorher lief (center_yellow/white gesetzt).
+        """duckie_only ohne Ente: selbst der Spur folgen und control_active aktiv lassen,
+        damit switch_control im Enten-Modus bleibt. Setzt voraus, dass fnDetectLane lief.
 
         Autor: Felix Faass
         """
-        # An DER Zeile rechnen, an der fnDetectLane die Linien wirklich gemessen hat.
-        # Eine feste Zeile waere falsch: bei vorhandener Ente misst fnDetectLane an DEREN
-        # Zeile - dann wuerden Linienpositionen aus Zeile A mit lane_px(B) verrechnet.
+        # An der Zeile rechnen, an der fnDetectLane die Linien gemessen hat (nicht fest).
         row = self.debug_lane_row
         if row is None:
             row = int((self._ref_y0 + self._ref_y1) / 2)
@@ -748,10 +654,7 @@ class DetectDuckiesNode:
         self.debug_blocked = False
 
     def _path_center(self):
-        """Wo faehrt der Bot wirklich hin? Auf der Geraden ist das die Bildmitte, in der
-        KURVE aber nicht - dort liegt der Fahrweg seitlich versetzt. Die Spurmitte sagt
-        das bereits (sie IST die Kurve), und fnDetectLane hat sie ohnehin schon berechnet
-        -> kostenlos. Sind die Linien unbrauchbar, bleibt die Bildmitte als Rueckfall.
+        """Fahrweg-Mitte = Spurmitte (folgt der Kurve), sonst Bildmitte als Rueckfall.
 
         Autor: Felix Faass
         """
@@ -762,12 +665,8 @@ class DetectDuckiesNode:
         return (self.center_yellow + self.center_white) / 2.0
 
     def _duck_in_path(self, duck):
-        """Liegt diese Ente im Fahrband des Bots? Geprueft an IHRER EIGENEN Bildzeile (y2,
-        also ihrem Bodenpunkt) - NICHT an der Zeile irgendeiner anderen Ente. Sonst faellt
-        eine Ente in anderer Tiefe aus der Betrachtung und wird ueberfahren.
-        Fahrband = Spurbreite(y2) um die SPURMITTE (1:1 = Bot inkl. Reifen).
-        Frueher lag das Band um die Bildmitte = stur geradeaus -> in der Kurve sass die
-        Ente seitlich daneben, fiel aus dem Band und wurde ueberfahren.
+        """Liegt die Ente im Fahrband? Geprueft an IHRER Zeile (y2); Band = Spurbreite(y2)
+        um die Spurmitte (folgt der Kurve).
 
         Autor: Felix Faass
         """
@@ -779,15 +678,8 @@ class DetectDuckiesNode:
         return max(x1, x2) > path_l and min(x1, x2) < path_r
 
     def _target_hits_duck(self, target, row, ducks):
-        """Wuerde dieses Ziel eine Ente in einer ANDEREN Tiefe treffen?
-
-        Trick ueber den Spurbreiten-Massstab: der Seitenversatz des Ziels ist
-        k = (target - Bildmitte) / lane_px(row)  -> Versatz in Spurbreiten. Derselbe reale
-        Versatz liegt in Zeile y2 bei  Bildmitte + k * lane_px(y2). Damit laesst sich das
-        Ziel in JEDE Tiefe projizieren und gegen die dortigen Enten pruefen - genau der
-        Fall "ich weiche der einen aus und fahre die andere um".
-        Enten nahe der Referenzzeile werden uebersprungen, die deckt die Luecken-Rechnung
-        selbst ab.
+        """Wuerde dieses Ziel eine Ente in ANDERER Tiefe treffen? Der Seitenversatz in
+        Spurbreiten (k) wird in jede Zeile projiziert und gegen die dortigen Enten geprueft.
 
         Autor: Felix Faass
         """
@@ -802,35 +694,14 @@ class DetectDuckiesNode:
         return False
 
     def _pivot_direction(self, ducks_in_path=None):
-        """Drehrichtung fuer den Pivot. Grundregel: IMMER WEG von dem, was im Weg ist.
-
-        VORZEICHEN (wie ueberall im Projekt, vgl. Abbiegen an der Kreuzung:
-        links = omega +1.2, rechts = omega -2.5):
-            +1  ->  omega positiv  ->  dreht nach LINKS
-            -1  ->  omega negativ  ->  dreht nach RECHTS
-
-        Damit konkret:
-            weisse Linie rechts naeher  -> +1 -> nach LINKS  (weg von weiss)
-            gelbe  Linie links  naeher  -> -1 -> nach RECHTS (weg von gelb)
-            Ente links im Weg           -> -1 -> nach RECHTS (weg von der Ente)
-            Ente rechts im Weg          -> +1 -> nach LINKS
-        Gleiche Konvention wie beim normalen Ausweichen (error = Bildmitte - Ziel).
-
-        Reihenfolge der Kriterien:
-
-        1. Linien verlaesslich -> WEG von der naeheren Linie (dort ist mehr Platz).
-        2. Sonst, wenn Enten im Weg bekannt -> WEG von der Ente. Ohne Linien wissen wir
-           zwar nicht, wo die Strasse ist, aber YOLO sagt uns, wo die ENTE ist - und in
-           die zu drehen ist immer falsch. (Vorher: blind Prior links -> drehte in eine
-           links stehende Ente hinein.)
-        3. Sonst Strecken-Prior (diese Strecke kurvt immer links -> +1).
+        """Drehrichtung fuer den Pivot: immer WEG von dem, was im Weg ist.
+        Vorzeichen: +1 = omega positiv = LINKS, -1 = RECHTS (wie beim Abbiegen).
+        Reihenfolge: 1. weg von der naeheren echten Linie, 2. weg von der Ente im Weg,
+        3. Strecken-Prior (kurvt immer links -> +1).
 
         Autor: Felix Faass
         """
-        # NUR VALIDE Linien duerfen die Richtung bestimmen. Sonst entscheidet eine
-        # erfundene/von der Ente kontaminierte Linie mit: eine gelbe Ente links wird als
-        # "gelbe Linie" gewertet -> "weg von gelb" -> rechts, obwohl rechts die echte
-        # weisse Linie steht und es nach links gehen muesste.
+        # Nur valide Linien duerfen entscheiden (eine gelbe Ente sonst als "gelbe Linie").
         yv = self.yellow_valid and self.center_yellow is not None
         wv = self.white_valid and self.center_white is not None
         near = None
@@ -858,10 +729,8 @@ class DetectDuckiesNode:
         return 1   # Strecken-Prior: kurvt immer links -> +1 = LINKS
 
     def _lane_px(self, y):
-        """Spur-Innenbreite in px an Bildzeile y, aus der statischen Referenz.
-        Das ist der MASSSTAB dieser Zeile: 1 Spurbreite ~ Bot-Breite + Toleranz.
-        Damit lassen sich alle horizontalen Abstaende dieser Zeile in "Spurbreiten"
-        ausdruecken -> perspektivkonsistent, ganz ohne Kamerakalibrierung.
+        """Spur-Innenbreite (px) an Zeile y aus der statischen Referenz = Massstab dieser
+        Zeile (1 Spurbreite ~ Bot-Breite), perspektivkonsistent ohne Kalibrierung.
 
         Autor: Felix Faass
         """
@@ -871,46 +740,28 @@ class DetectDuckiesNode:
 
     def fnGetLaneDuckieError(self, active_duckies, row):
         """
-        Sucht die beste Fahr-Luecke in der Detektions-Zeile. Statt nur die naechste
-        Ente gegen eine Linie zu betrachten, werden ALLE Enten (die diese Zeile
-        schneiden) als blockierte Intervalle behandelt und die freien Luecken
-        zwischen gelber Linie, den Enten und weisser Linie gebildet. Gewaehlt wird
-        die breiteste Luecke und zielt in ihre MITTE (max. Abstand zu Ente UND Linie
-        -> Bot passt durch, ohne dass wir die Bot-Breite kennen). Rueckgabe: (error, stop).
-          - keine Linien / keine Ente im Korridor -> (None, False): kein Ausweichen.
-          - Ente(n) im Weg -> (error, False): mittig durch die breiteste Luecke,
-            bevorzugt eine, durch die der Bot passt.
-          - Ente im Fahrband UND in der SPERRZONE (nah) -> (0.0, True): Pivot.
-
-        PIVOT HAT GENAU EINEN AUSLOESER: die Sperrzone (Ente nah + im Fahrband). Der
-        Fit-Check ("passt der Bot durch die Luecke?", Luecke >= Spurbreite(row)) waehlt nur
-        noch die Luecke AUS und loest keinen Pivot mehr aus - sonst pivotierte der Bot schon
-        wegen weit entfernter Enten, weil der Korridor am Horizont perspektivisch schmal ist.
+        Sucht die beste Fahr-Luecke: alle Enten der Zeile als blockierte Intervalle, freie
+        Luecken zwischen gelb, Enten und weiss bilden, breiteste waehlen und mittig zielen.
+        Rueckgabe (error, stop):
+          - keine Linien / keine Ente im Korridor -> (None, False)
+          - Ente(n) im Weg -> (error, False): mittig durch die breiteste Luecke
+          - Ente im Fahrband UND in der Sperrzone -> (0.0, True): Pivot
+        Pivot loest NUR die Sperrzone aus; der Fit-Check waehlt nur die Luecke aus.
 
         Autor: Felix Faass
         """
-        # ZUERST: steht eine Ente im Fahrband? Das braucht KEINE Linien - das Band kommt
-        # aus der statischen Referenzbreite um _path_center() (faellt notfalls auf die
-        # Bildmitte zurueck). Diese Frage muss vor allem Linien-Kram kommen, sonst wird
-        # eine Ente direkt vor dem Bot ignoriert, nur weil die Linien gerade mies sind.
+        # Zuerst: Ente im Fahrband? Braucht keine Linien (Band aus der statischen Referenz),
+        # muss vor der Linien-Rechnung kommen.
         in_path_ducks = [d for d in active_duckies if self._duck_in_path(d)]
         in_path = bool(in_path_ducks)
 
-        # SPERRZONE = DER EINZIGE PIVOT-AUSLOESER. Ente im Fahrweg UND so nah (y2 unterhalb
-        # _blocked_zone_top), dass ein PID-Ausweichbogen nicht mehr reicht -> Manoever
-        # abbrechen und auf der Stelle drehen.
-        #
-        # Bewusst NUR hier: frueher loeste auch der Fit-Check ("keine Luecke >= Bot-Breite")
-        # einen Pivot aus, und zwar bei JEDER Distanz. Am Horizont ist der Korridor
-        # perspektivisch schmal, eine volle Bot-Breite passt dort fast nie rein -> "no fit"
-        # schon bei weit entfernten Enten, obwohl beim Naeherkommen laengst Platz ist.
-        # Zwei widersprechende Logiken. Jetzt gilt: Pivot <=> Ente im Fahrband UND nah.
+        # Sperrzone = einziger Pivot-Ausloeser: Ente im Fahrweg UND nah (y2 >= _blocked_zone_top)
+        # -> auf der Stelle drehen statt PID-Ausweichbogen.
         if any(d[3] >= self._blocked_zone_top for d in in_path_ducks):
             self.debug_largest_gap = None
             return 0.0, True
 
-        # LINIE QUER IM FAHRWEG, zu nah zum Ausweichen -> ebenfalls Pivot (zweistufig wie
-        # bei Enten: weiter vorne wird nur gegengelenkt, s. _push_from_line).
+        # Quer liegende Linie zu nah -> ebenfalls Pivot.
         if self._line_in_path()[1]:
             self.debug_largest_gap = None
             return 0.0, True
@@ -981,52 +832,37 @@ class DetectDuckiesNode:
             self.debug_close_to_white = False
             return self._norm_err(target), False
 
-        # FIT-CHECK: durch welche Luecken passt der Bot? Luecke und Spurbreite in DERSELBEN
-        # Zeile -> Perspektive kuerzt sich weg, keine Kalibrierung noetig.
-        # Dient NUR der Luecken-AUSWAHL, loest KEINEN Pivot aus (s. Sperrzone oben): auf
-        # Distanz ist "passt nicht" eine Vorhersage ueber eine Lage, die sich beim
-        # Naeherkommen komplett aendert - und am Horizont ist die Messung am unsichersten.
+        # Fit-Check: durch welche Luecken passt der Bot? (Luecke vs. Spurbreite derselben
+        # Zeile). Nur Luecken-Auswahl, loest keinen Pivot aus.
         need = self._lane_px(row)
         passable = [g for g in gaps if (g[1] - g[0]) >= need]
         pivot_needed = False
 
-        # Ziel = Mitte der breitesten PASSIERBAREN Luecke - aber mit TIEFEN-VETO: die
-        # breiteste Luecke, deren Ziel keine Ente in einer anderen Tiefe trifft. Trifft
-        # jede eine, bleibt es bei der breitesten (best effort, KEIN zusaetzlicher Pivot -
-        # das Veto darf nur besser waehlen, nie neue Pivots ausloesen).
+        # Ziel = Mitte der breitesten passierbaren Luecke, deren Ziel keine Ente in anderer
+        # Tiefe trifft (Tiefen-Veto).
         ordered = sorted(passable or gaps, key=lambda g: g[1] - g[0], reverse=True)
         chosen = next((g for g in ordered
                        if not self._target_hits_duck((g[0] + g[1]) / 2.0, row, active_duckies)),
                       ordered[0])
         target = (chosen[0] + chosen[1]) / 2.0
 
-        # AUSWEICH-DAEMPFUNG: Das Lueckenziel kann sprunghaft weit von der Spurmitte weg
-        # liegen - viel weiter als beim reinen Linienfahren. Beides laeuft aber durch
-        # DIESELBEN pid_duckie-Gains, deshalb sind Werte, die fuer die Linie passen, beim
-        # Ausweichen zu heftig. Also nur den AUSWEICH-ANTEIL daempfen: die Verschiebung
-        # von der Spurmitte zum Lueckenziel wird mit _avoid_gain skaliert, die Spurmitte
-        # selbst bleibt unangetastet. avoid_gain=1.0 -> wie vorher.
+        # Ausweich-Daempfung: nur den Anteil Spurmitte->Lueckenziel mit _avoid_gain skalieren
+        # (gleiche pid_duckie-Gains wie beim Linienfahren waeren beim Ausweichen zu heftig).
         base = self._lane_center(row)
         if base is None:
             base = (left + right) / 2.0
         target_damped = base + (target - base) * self._avoid_gain
-        # ABER: in die gewaehlte Luecke klemmen. Liegt die Ente zwischen Spurmitte und
-        # Luecke, wuerde das gedaempfte Ziel sonst mitten AUF der Ente landen - die
-        # Daempfung darf den Ausschlag verkleinern, aber nie in die Ente hineinzielen.
+        # In die gewaehlte Luecke klemmen, damit das gedaempfte Ziel nie auf einer Ente landet.
         target_damped = max(chosen[0], min(chosen[1], target_damped))
 
         self.debug_largest_gap = target_damped
         self.debug_close_to_white = target_damped > (left + right) / 2.0
-        # Nur auf die halbe Bildbreite normieren (feste Konstante), NICHT durch lane_px
-        # teilen: die perspektivische Stauchung ferner Seitenversaetze ist die gewollte
-        # Daempfung (ferne Ente -> sanft lenken). lane_px dient nur BREITEN-Vergleichen
-        # (Fit-Check/Fahrband).
+        # Auf halbe Bildbreite normieren, NICHT durch lane_px teilen (die perspektivische
+        # Daempfung ferner Versaetze ist gewollt).
         return self._norm_err(target_damped), pivot_needed
 
     def fnDrawFitCheck(self, img):
-        """Debug-only: nutzt die STATISCHE Spur-Referenz (Bot-Breite pro Zeile) und
-        zeichnet gegen die aktuellen Enten ein, WO der Bot durchpasst (gruen) und wo
-        nicht (rot). Reine Anzeige, kein Steuer-Eingriff.
+        """Debug-only: zeichnet, wo der Bot durchpasst (gruen) und wo nicht (rot).
 
         Autor: Felix Faass
         """
@@ -1039,16 +875,13 @@ class DetectDuckiesNode:
             corners = np.array([[xl(y0), y0], [xr(y0), y0], [xr(y1), y1], [xl(y1), y1]], np.int32)
             cv2.polylines(img, [corners], True, (200, 200, 200), 1)
 
-            # FAHRBAND (cyan): bot-breites Band um die SPURMITTE - das ist der Weg, auf dem
-            # geprueft wird "Ente im Weg?". In der Kurve muss es sich mitverschieben; klebt
-            # es auf 320, faehrt er Enten in der Kurve um.
+            # Fahrband (cyan): bot-breites Band um die Spurmitte (folgt der Kurve).
             pc = self._path_center()
             band = np.array([[pc - self._lane_px(y0) / 2, y0], [pc + self._lane_px(y0) / 2, y0],
                              [pc + self._lane_px(y1) / 2, y1], [pc - self._lane_px(y1) / 2, y1]], np.int32)
             cv2.polylines(img, [band], True, (255, 255, 0), 2)
 
-            # SPERRZONE (magenta): Ente mit y2 hier drin + im Fahrband -> PID-Manoever aus,
-            # Pivot an. Entspricht dem pink markierten Bereich aus der Skizze.
+            # Sperrzone (magenta): Ente hier drin + im Fahrband -> Pivot statt PID.
             zt = int(self._blocked_zone_top)
             cv2.line(img, (0, zt), (img.shape[1], zt), (255, 0, 255), 2)
             cv2.putText(img, "SPERRZONE", (8, zt + 20),
@@ -1094,13 +927,8 @@ class DetectDuckiesNode:
             pass
 
     def fnDrawLineMasks(self):
-        """Debug-only: zeigt die Gelb-/Weiss-Masken, mit denen fnDetectLane die Linien
-        sucht (inkl. ausmaskierter Enten). Zeigt sofort, warum Y/W ggf. auf ihre
-        Rand-Fallbacks fallen: sieht man in der Maske an der Suchzeile nichts, ist die
-        Linie fuer den Code schlicht nicht da.
-        Gelb = gelbe Maske, Weiss = weisse Maske, Grau = beide (Ueberlappung).
-        Waagerecht: Suchzeile +-50 (get_x_for_driving mittelt darueber).
-        Punkte: erkannte Position; gefuellt = echt gesehen, hohl = nur Fallback.
+        """Debug-only: zeigt die Gelb-/Weiss-Masken (inkl. ausmaskierter Enten) mit Suchzeile
+        und erkannter Position (gefuellt = echt, hohl = Fallback).
 
         Autor: Felix Faass
         """
@@ -1140,8 +968,7 @@ class DetectDuckiesNode:
                          f" {'OK' if self.white_valid else 'FALLBACK'}",
                     (5, 38), cv2.FONT_HERSHEY_SIMPLEX, 0.5,
                     (255, 255, 255) if self.white_valid else (0, 0, 255), 1)
-        # gelerntes Streckenbreiten-Verhaeltnis (in Spurbreiten) + daraus rekonstruierte
-        # Fahrlinie -> zeigt, ob die Rekonstruktion bei Gelb-Fallback plausibel ist
+        # gelerntes Streckenbreiten-Verhaeltnis + rekonstruierte Fahrlinie.
         r = self._track_width_ratio
         cv2.putText(img, f"track {'--' if r is None else '%.2f' % r} lane-widths",
                     (5, 58), cv2.FONT_HERSHEY_SIMPLEX, 0.45,
@@ -1154,8 +981,7 @@ class DetectDuckiesNode:
 
     def run_debug(self):
         """
-        Hauptloop der Node. Publiziert das Debug-Bild mit markierten roten Pixeln
-        auf dem Debug-Topic, solange Subscriber vorhanden sind.
+        Hauptloop: zeichnet und publiziert das Duckie-View-Debugbild.
 
         Autor: Felix Faass
         """
@@ -1231,16 +1057,13 @@ class DetectDuckiesNode:
                         cv2.putText(img, f"Error: {self.debug_duckie_error:.3f}",
                                     (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
                     if self.debug_blocked:
-                        # Richtung mit anzeigen: +1 = links, -1 = rechts (immer WEG von dem,
-                        # was im Weg ist). Ohne die Angabe sieht man beim Fahren nicht, ob er
-                        # sich richtig herum dreht.
+                        # Pivot-Richtung anzeigen (+1 links, -1 rechts).
                         d = self.debug_pivot_dir
                         arrow = "<< LINKS" if d > 0 else (">> RECHTS" if d < 0 else "?")
                         cv2.putText(img, f"PIVOT {arrow}", (10, 60),
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
 
-                # Debug: statische Spur-Referenz nutzen und einzeichnen, wo der Bot
-                # durchpasst (gruen) / nicht (rot). Nur Anzeige, kein Steuer-Eingriff.
+                # Fit-Check einzeichnen (gruen = passt, rot = zu schmal).
                 self.fnDrawFitCheck(img)
 
                 cv2.imshow('Duckie View', img)
