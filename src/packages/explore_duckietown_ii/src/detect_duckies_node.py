@@ -287,11 +287,8 @@ class DetectDuckiesNode:
                         side = 1 if duck_cx < self.image_middle else -1
                 self.pub_duckie_side.publish(Int32(data=side))
 
-                # Untere Schranke (zu weit weg) deaktiviert weiterhin. Oben NICHT mehr
-                # deaktivieren: ist die Ente naeher als distance_max, ist sie maximal
-                # gefaehrlich -> Control aktiv lassen, distance_factor unten auf 1.0 geclampt.
-                # (Vorher fiel die Ente bei y2>distance_max aus dem Bereich -> Bremse/Lenkung
-                # aus -> Bot kroch in die Ente.)
+                # Nur die untere Schranke filtert (zu weit weg); oben nicht mehr, sonst kroch
+                # der Bot in die naechste Ente.
                 if lowest_duckie is not None and lowest_duckie[3] >= self.duckie_distance_min:
                     # Spurlinien an der Zeile der naechsten Ente bestimmen (center_yellow zum Filtern).
                     hsv[duckie_mask == 255] = 0
@@ -592,17 +589,10 @@ class DetectDuckiesNode:
                     0.2 * ratio + 0.8 * self._track_width_ratio)
             return (self.center_yellow + self.center_white) / 2.0
 
-        # Rekonstruktion aus EINER Linie + gelerntem Verhaeltnis: VERWORFEN. Die Annahme
-        # "Verhaeltnis ist perspektivfrei" haelt nicht - bei schraegem Bot oder in der
-        # Kurve skaliert die Streckenbreite im Bild nicht wie lane_px. Isolierter Test:
-        # ratio bei row=250 gelernt (3.63), bei row=337 angewandt -> lane_center=13, also
-        # Vollausschlag an den Bildrand. Schlimmer als der Fallback, den es ersetzen sollte.
-        # _track_width_ratio wird weiterhin gelernt und im Debug angezeigt (interessant),
-        # aber NICHT zum Fahren benutzt.
+        # Rekonstruktion aus EINER Linie + gelerntem Verhaeltnis: verworfen (haelt bei
+        # schraegem Bot/Kurve nicht). _track_width_ratio wird nur im Debug angezeigt.
 
-        # Sonst: (ggf. verzerrte) Mitte aus dem, was da ist. Verzerrt (Fallback-Gelb) ist
-        # immer noch besser als gar kein Lenkziel - ohne das ignorierte der Bot die weisse
-        # Linie komplett (err=0.0 = stur geradeaus).
+        # Sonst: (ggf. verzerrte) Mitte aus dem, was da ist - besser als gar kein Lenkziel.
         if self.center_yellow is not None and self.center_white is not None:
             return (self.center_yellow + self.center_white) / 2.0
         return None
@@ -771,10 +761,7 @@ class DetectDuckiesNode:
                     and (self.white_valid or self.yellow_valid))
 
         if not lines_ok:
-            # Ohne echte Linien keine Luecken-Rechnung moeglich. Die Ente ist hier
-            # zwangslaeufig NICHT in der Sperrzone (sonst waeren wir oben raus), also noch
-            # weit weg -> kein Pivot, einfach weiterfahren. Kommt sie naeher, greift die
-            # Sperrzone.
+            # Ohne echte Linien keine Luecken-Rechnung; Ente ist hier noch weit weg -> weiterfahren.
             self.debug_largest_gap = None
             return None, False
 
@@ -800,9 +787,7 @@ class DetectDuckiesNode:
         # Ente(n) im Korridor, aber keine im FAHRWEG (in_path oben ueber alle Enten an
         # IHRER jeweils eigenen Zeile geprueft) -> nicht ausweichen.
         if not in_path:
-            # Ente(n) im Bild, aber NICHT im Weg -> nicht ausweichen, sondern normal die
-            # Spur halten. Ueber _lane_center, damit ein Gelb-Fallback die Fahrlinie nicht
-            # nach aussen zieht (genau das trug den Bot von der Strecke).
+            # Enten im Bild, aber nicht im Weg -> normal Spur halten (ueber _lane_center).
             lane_center = self._lane_center(row)
             if lane_center is None:
                 lane_center = (left + right) / 2.0   # gar keine Linien -> Korridormitte
@@ -823,10 +808,8 @@ class DetectDuckiesNode:
             gaps.append((cursor, right))
 
         if not gaps:
-            # Korridor an dieser Zeile komplett zu. KEIN Pivot: die Ente ist hier noch
-            # nicht in der Sperrzone, und am Horizont ist der Korridor ohnehin schmal ->
-            # meist ein Perspektiv-Artefakt. Auf die Korridormitte zielen und weiterfahren;
-            # bleibt es dabei, greift beim Naeherkommen die Sperrzone.
+            # Korridor an dieser Zeile zu, aber Ente noch nicht in der Sperrzone -> auf die
+            # Korridormitte zielen und weiterfahren.
             target = (left + right) / 2.0
             self.debug_largest_gap = target
             self.debug_close_to_white = False
