@@ -6,3 +6,8 @@ __pycache__/
 logs/
 media/
 .vscode/
+.claude/
+# lokale Scratch-/Notiz-Dateien, gehoeren nicht ins Repo
+/test.py
+/docs/avoid_duckie.ipynb
+/docs/duckie_detection.ipynb
