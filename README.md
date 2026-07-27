@@ -220,21 +220,13 @@ Fortschritt, unten die gemappten Tore:
 ![Dashboard während des Torlaufs](img/dashboard_torlauf.png)
 
 ---
-
-## Overlay / Debug-Ansicht
-
-> _Hier kommen noch ein oder mehrere Bilder rein, die das Overlay (Debug-View) erklären,
-> was die einzelnen eingezeichneten Elemente bedeuten. (Wird später ergänzt.)_
-
-<br>
-
----
 ---
 
 # 📄 Ursprüngliches README (Original)
 
 > Ab hier folgt das **originale README**, das wir zu Beginn mit dem Repository erhalten haben
-> (Setup-Anleitung, ROS-Installation etc.). Es ist unverändert zur Referenz belassen.
+> (Setup-Anleitung, ROS-Installation etc.). Von uns leicht angepasst: die alten
+> `follow_lane`-Pfade wurden auf `explore_duckietown_ii` aktualisiert, da das Paket entfernt wurde.
 
 ---
 
