@@ -112,9 +112,6 @@ class DetectDuckiesNode:
     def cbUpdateParameters(self, parameters):
         """
         Lädt Parameter aus der Konfigurationsdatei und aktualisiert die Instanzvariablen.
-        Wird automatisch aufgerufen wenn Parameter über configuration_node geändert werden.
-
-        Autor: Felix Faass
 
         Args:
             parameters (dict): Dictionary mit allen Parametern aus der JSON-Konfigurationsdatei
@@ -161,8 +158,6 @@ class DetectDuckiesNode:
     def crop_img(self, img):
         """
         Wendet eine perspektivische Transformation auf das Bild an und schneidet es auf crop_im_size x crop_im_size zu.
-
-        Autor: Felix Faass
 
         Args:
             img: BGR-Kamerabild als numpy Array
@@ -279,10 +274,7 @@ class DetectDuckiesNode:
 
     def fnDetectDuckies(self, image):
         """
-        Hier soll der Code zur Erkennung von Duckies implementiert werden. Das Ergebnis (True wenn Duckie erkannt, sonst False)
-        wird auf dem Topic /{vehicle_name}/detect/duckies veröffentlicht.
-
-        Autor: Felix Faass
+        Erkennt Duckies im Kamerabild (YOLO) und legt die Boxen in self.final_duckies ab.
 
         Args:
             img: BGR-Kamerabild als numpy Array
@@ -393,8 +385,6 @@ class DetectDuckiesNode:
         die breiteste Luecke, die mindestens _min_gap_px breit ist (~Bot-Breite) ->
         damit faehrt der Bot auch zwischen zwei Enten durch. Gibt es keine Ente im
         Korridor, wird None zurueckgegeben (kein Ausweichen noetig).
-
-        Autor: Felix Faass
         """
         if self.center_white is None or self.center_yellow is None:
             return None
@@ -449,8 +439,6 @@ class DetectDuckiesNode:
         """
         Hauptloop der Node. Publiziert das Debug-Bild mit markierten roten Pixeln
         auf dem Debug-Topic, solange Subscriber vorhanden sind.
-
-        Autor: Felix Faass
         """
         rate = rospy.Rate(10)
         while not rospy.is_shutdown():

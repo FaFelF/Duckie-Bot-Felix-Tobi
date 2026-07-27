@@ -134,8 +134,6 @@ class SwitchControlNode:
         """
         Bei erkannter Kreuzung ausrichten und abbiegen. Richtung je nach Modus aus dem Plan
         (Challenge 4) oder zufaellig aus dem Kreuzungstyp-Tag (Challenge 2).
-
-        Autor: Felix Faass
         """
         if self.intersection_running:
             return
@@ -182,8 +180,6 @@ class SwitchControlNode:
         """
         Wird gesetzt, wenn control_lane_node das Ausrichten abgeschlossen hat.
         Erst dann (und nach Ablauf der Mindest-Standzeit) wird abgebogen.
-
-        Autor: Felix Faass
         """
         if msg.data:
             self._aligned = True

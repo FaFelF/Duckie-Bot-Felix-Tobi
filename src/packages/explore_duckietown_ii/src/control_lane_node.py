@@ -170,8 +170,6 @@ class ControlLaneNode:
         verhindert Schwingen/Pendeln. Innerhalb der Toleranz wird gestoppt,
         sobald der Wert über mehrere Zyklen stabil ist. Ein Timeout sorgt dafür,
         dass das Manöver auch bei fehlender/verrauschter Linie nicht hängen bleibt.
-
-        Autor: Felix Faass
         """
         twist.v = 0.0
         twist.omega = 0.0
