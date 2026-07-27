@@ -125,9 +125,6 @@ class DetectDuckiesNode:
     def cbUpdateParameters(self, parameters):
         """
         Lädt Parameter aus der Konfigurationsdatei und aktualisiert die Instanzvariablen.
-        Wird automatisch aufgerufen wenn Parameter über configuration_node geändert werden.
-
-        Autor: Felix Faass
 
         Args:
             parameters (dict): Dictionary mit allen Parametern aus der JSON-Konfigurationsdatei
@@ -185,8 +182,6 @@ class DetectDuckiesNode:
     def crop_img(self, img):
         """
         Wendet eine perspektivische Transformation auf das Bild an und schneidet es auf crop_im_size x crop_im_size zu.
-
-        Autor: Felix Faass
 
         Args:
             img: BGR-Kamerabild als numpy Array
@@ -390,10 +385,7 @@ class DetectDuckiesNode:
 
     def fnDetectDuckies(self, image):
         """
-        Hier soll der Code zur Erkennung von Duckies implementiert werden. Das Ergebnis (True wenn Duckie erkannt, sonst False)
-        wird auf dem Topic /{vehicle_name}/detect/duckies veröffentlicht.
-
-        Autor: Felix Faass
+        Erkennt Duckies im Kamerabild (YOLO) und legt die Boxen in self.final_duckies ab.
 
         Args:
             img: BGR-Kamerabild als numpy Array
@@ -542,8 +534,6 @@ class DetectDuckiesNode:
 
         Rueckgabe (richtung, nah): richtung +1=links / -1=rechts / 0=frei (weg von der Linie);
         nah=True wenn die Linie in der Sperrzone liegt -> Pivot.
-
-        Autor: Felix Faass
         """
         my, mw = self.debug_mask_yellow, self.debug_mask_white
         if my is None or mw is None:
@@ -577,8 +567,6 @@ class DetectDuckiesNode:
           2. eine + gelernt -> aus der echten Linie rekonstruiert
           3. sonst          -> (gelb+weiss)/2 aus dem, was da ist (verzerrt, aber reagiert)
           4. keine Linien   -> None
-
-        Autor: Felix Faass
         """
         lane = self._lane_px(row)
         if self.center_yellow is not None and self.center_white is not None \
@@ -603,16 +591,12 @@ class DetectDuckiesNode:
         pid vergleichbar. Ersetzt die alte Magie-Konstante /750 im Regler, die den
         Fehlerbereich auf ~+-0.43 stauchte und dem Enten-Modus rund ein Drittel der
         Lenkautoritaet des Spur-Reglers liess (Bot trug in Kurven raus).
-
-        Autor: Felix Faass
         """
         return (self.image_middle - target) / float(max(1, self.image_middle))
 
     def _publish_lane_follow(self):
         """duckie_only ohne Ente: selbst der Spur folgen und control_active aktiv lassen,
         damit switch_control im Enten-Modus bleibt. Setzt voraus, dass fnDetectLane lief.
-
-        Autor: Felix Faass
         """
         # An der Zeile rechnen, an der fnDetectLane die Linien gemessen hat (nicht fest).
         row = self.debug_lane_row
@@ -645,8 +629,6 @@ class DetectDuckiesNode:
 
     def _path_center(self):
         """Fahrweg-Mitte = Spurmitte (folgt der Kurve), sonst Bildmitte als Rueckfall.
-
-        Autor: Felix Faass
         """
         if self.center_yellow is None or self.center_white is None:
             return float(self.image_middle)
@@ -657,8 +639,6 @@ class DetectDuckiesNode:
     def _duck_in_path(self, duck):
         """Liegt die Ente im Fahrband? Geprueft an IHRER Zeile (y2); Band = Spurbreite(y2)
         um die Spurmitte (folgt der Kurve).
-
-        Autor: Felix Faass
         """
         x1, y1, x2, y2, conf = duck
         bot_w = self._lane_px(y2)
@@ -670,8 +650,6 @@ class DetectDuckiesNode:
     def _target_hits_duck(self, target, row, ducks):
         """Wuerde dieses Ziel eine Ente in ANDERER Tiefe treffen? Der Seitenversatz in
         Spurbreiten (k) wird in jede Zeile projiziert und gegen die dortigen Enten geprueft.
-
-        Autor: Felix Faass
         """
         k = (target - self.image_middle) / self._lane_px(row)
         for x1, y1, x2, y2, conf in ducks:
@@ -688,8 +666,6 @@ class DetectDuckiesNode:
         Vorzeichen: +1 = omega positiv = LINKS, -1 = RECHTS (wie beim Abbiegen).
         Reihenfolge: 1. weg von der naeheren echten Linie, 2. weg von der Ente im Weg,
         3. Strecken-Prior (kurvt immer links -> +1).
-
-        Autor: Felix Faass
         """
         # Nur valide Linien duerfen entscheiden (eine gelbe Ente sonst als "gelbe Linie").
         yv = self.yellow_valid and self.center_yellow is not None
@@ -721,8 +697,6 @@ class DetectDuckiesNode:
     def _lane_px(self, y):
         """Spur-Innenbreite (px) an Zeile y aus der statischen Referenz = Massstab dieser
         Zeile (1 Spurbreite ~ Bot-Breite), perspektivkonsistent ohne Kalibrierung.
-
-        Autor: Felix Faass
         """
         y = max(self._ref_y0, min(self._ref_y1, float(y)))
         width = (self._ref_aR - self._ref_aL) * y + (self._ref_bR - self._ref_bL)
@@ -737,8 +711,6 @@ class DetectDuckiesNode:
           - Ente(n) im Weg -> (error, False): mittig durch die breiteste Luecke
           - Ente im Fahrband UND in der Sperrzone -> (0.0, True): Pivot
         Pivot loest NUR die Sperrzone aus; der Fit-Check waehlt nur die Luecke aus.
-
-        Autor: Felix Faass
         """
         # Zuerst: Ente im Fahrband? Braucht keine Linien (Band aus der statischen Referenz),
         # muss vor der Linien-Rechnung kommen.
@@ -846,8 +818,6 @@ class DetectDuckiesNode:
 
     def fnDrawFitCheck(self, img):
         """Debug-only: zeichnet, wo der Bot durchpasst (gruen) und wo nicht (rot).
-
-        Autor: Felix Faass
         """
         try:
             xl = lambda y: self._ref_aL * y + self._ref_bL
@@ -912,8 +882,6 @@ class DetectDuckiesNode:
     def fnDrawLineMasks(self):
         """Debug-only: zeigt die Gelb-/Weiss-Masken (inkl. ausmaskierter Enten) mit Suchzeile
         und erkannter Position (gefuellt = echt, hohl = Fallback).
-
-        Autor: Felix Faass
         """
         my, mw = self.debug_mask_yellow, self.debug_mask_white
         if my is None or mw is None:
@@ -965,8 +933,6 @@ class DetectDuckiesNode:
     def run_debug(self):
         """
         Hauptloop: zeichnet und publiziert das Duckie-View-Debugbild.
-
-        Autor: Felix Faass
         """
         rate = rospy.Rate(10)
         while not rospy.is_shutdown():

@@ -210,8 +210,6 @@ class ControlLaneNode:
         die Ausweich-Logik ohnehin um sie herum. Und ueber die zurueckgelegte STRECKE
         (v*dt) statt ueber Zeit: nur echtes Vorwaertsfahren bringt uns vorbei. Beim Pivot
         (v=0) zaehlt nichts hoch - richtig, Drehen auf der Stelle kommt an keiner Ente vorbei.
-
-        Autor: Felix Faass
         """
         if self.duckie_blocked:
             # Pivot ist ein bewusstes Manoever und die einzige Option, wenn nichts mehr
@@ -293,8 +291,6 @@ class ControlLaneNode:
         verhindert Schwingen/Pendeln. Innerhalb der Toleranz wird gestoppt,
         sobald der Wert über mehrere Zyklen stabil ist. Ein Timeout sorgt dafür,
         dass das Manöver auch bei fehlender/verrauschter Linie nicht hängen bleibt.
-
-        Autor: Felix Faass
         """
         twist.v = 0.0
         twist.omega = 0.0

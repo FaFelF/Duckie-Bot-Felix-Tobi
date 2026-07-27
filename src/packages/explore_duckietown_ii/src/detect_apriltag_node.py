@@ -44,9 +44,6 @@ class DetectAprilTagNode:
     def cbUpdateParameters(self, parameters):
         """
         Lädt Parameter aus der Konfigurationsdatei und aktualisiert die Instanzvariablen.
-        Wird automatisch aufgerufen wenn Parameter über configuration_node geändert werden.
-
-        Autor: Felix Faass
 
         Args:
             parameters (dict): Dictionary mit allen Parametern aus der JSON-Konfigurationsdatei
@@ -87,8 +84,6 @@ class DetectAprilTagNode:
     def cbFindAprilTag(self, msg):
         """
         Callback-Funktion für das Abonnieren des Kameratopics. Verarbeitet jedes empfangene Bild, um AprilTags zu erkennen.
-
-        Autor: Felix Faass
 
         Args:
             msg (CompressedImage): Das empfangene Bild im komprimierten Format

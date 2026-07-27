@@ -87,8 +87,6 @@ class SwitchControlNode:
         ROS-Callback, wird aufgerufen wenn detect_intersection_node einen neuen Wert publiziert.
         Wechselt in den Stop-Modus wenn eine Kreuzung erkannt wird, wartet und fährt dann weiter.
 
-        Autor: Felix Faass
-
         Args:
             msg (Bool): True wenn roter Streifen erkannt, sonst False
         """
@@ -114,8 +112,6 @@ class SwitchControlNode:
         """
         Wird gesetzt, wenn control_lane_node das Ausrichten abgeschlossen hat.
         Erst dann (und nach Ablauf der Mindest-Standzeit) wird abgebogen.
-
-        Autor: Felix Faass
         """
         if msg.data:
             self._aligned = True

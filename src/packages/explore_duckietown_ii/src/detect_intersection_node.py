@@ -44,9 +44,6 @@ class DetectIntersectionNode:
     def cbUpdateParameters(self, parameters):
         """
         Lädt Parameter aus der Konfigurationsdatei und aktualisiert die Instanzvariablen.
-        Wird automatisch aufgerufen wenn Parameter über configuration_node geändert werden.
-
-        Autor: Felix Faass
 
         Args:
             parameters (dict): Dictionary mit allen Parametern aus der JSON-Konfigurationsdatei
@@ -88,8 +85,6 @@ class DetectIntersectionNode:
         """
         Wendet eine perspektivische Transformation auf das Bild an und schneidet es auf crop_im_size x crop_im_size zu.
 
-        Autor: Felix Faass
-
         Args:
             img: BGR-Kamerabild als numpy Array
 
@@ -112,10 +107,7 @@ class DetectIntersectionNode:
 
     def cbFindIntersection(self, image_msg):
         """
-        ROS-Callback, wird automatisch aufgerufen wenn ein neues Kamerabild ankommt.
         Dekodiert das Bild und übergibt es an detect_intersection.
-
-        Autor: Felix Faass
 
         Args:
             image_msg (CompressedImage): komprimiertes Kamerabild von ROS
@@ -170,8 +162,6 @@ class DetectIntersectionNode:
         Ecken sind nicht symmetrisch), sondern die Hauptrichtung der gesamten
         roten Fläche via cv2.fitLine. Das ist robust gegen schiefes Kleben.
 
-        Autor: Felix Faass
-
         Args:
             image: BGR-Kamerabild als numpy Array
 
@@ -221,8 +211,6 @@ class DetectIntersectionNode:
         Analysiert ein Kamerabild und erkennt ob ein roter Streifen (Kreuzung) sichtbar ist.
         Zählt rote Pixel im unteren Bilddrittel und vergleicht mit dem Schwellwert.
 
-        Autor: Felix Faass
-
         Args:
             image: BGR-Kamerabild als numpy Array
 
@@ -260,8 +248,6 @@ class DetectIntersectionNode:
         """
         Hauptloop der Node. Publiziert das Debug-Bild mit markierten roten Pixeln
         auf dem Debug-Topic, solange Subscriber vorhanden sind.
-
-        Autor: Felix Faass
         """
         rate = rospy.Rate(10)
         while not rospy.is_shutdown():
