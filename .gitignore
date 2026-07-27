@@ -7,10 +7,9 @@ logs/
 media/
 .vscode/
 .claude/
-# lokale Scratch-/Notiz-Dateien, gehoeren nicht ins Repo
+docs/
+# lokale Scratch-Datei, gehoert nicht ins Repo
 /test.py
-/docs/avoid_duckie.ipynb
-/docs/duckie_detection.ipynb
 # generierte Lauf-Ausgaben (werden vor jedem roslaunch neu geschrieben)
 # mapped_map.json bleibt getrackt = echtes Mapping-Ergebnis
 src/packages/explore_duckietown_ii/config/plan.json
