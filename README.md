@@ -225,8 +225,8 @@ Fortschritt, unten die gemappten Tore:
 # 📄 Ursprüngliches README (Original)
 
 > Ab hier folgt das **originale README**, das wir zu Beginn mit dem Repository erhalten haben
-> (Setup-Anleitung, ROS-Installation etc.). Von uns leicht angepasst: die alten
-> `follow_lane`-Pfade wurden auf `explore_duckietown_ii` aktualisiert, da das Paket entfernt wurde.
+> (Setup-Anleitung, ROS-Installation etc.). Von uns angepasst: die alten `follow_lane`-Pfade auf
+> `explore_duckietown_ii` aktualisiert (Paket entfernt) und um eigene Kommentare/Notizen ergänzt.
 
 ---
 
