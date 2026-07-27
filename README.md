@@ -100,7 +100,7 @@ zufälliges Abbiegen statt Plan).
 - Der **Moduswechsel** (Fahren, Stop, Align, Intersection, Fahren) läuft über den
   `switch_control_node`.
 
-![AprilTag-Erkennung an einer Kreuzung](media/Debug%20View_screenshot_shchild.png)
+![AprilTag-Erkennung an einer Kreuzung](img/apriltag_kreuzung.png)
 
 ---
 
@@ -130,12 +130,12 @@ damit die Erkennung ab dem ersten Frame läuft). Sobald Enten erkannt werden, we
 Fahrmodus in den **Obstacle-Modus**; für die Challenge wurde der Bot dauerhaft in den
 Enten-Modus geforced.
 
-![Erkennung im Betrieb](media/Screenshot%20from%202026-07-21%2011-08-57.png)
+![Erkennung im Betrieb](img/duckie_erkennung.png)
 
 **1. Ansatz:** PID auf die Enten-Bounding-Box und die weiße/gelbe Linie; der Fehler wurde
 auf die **größte Lücke** zwischen den Enten berechnet und darauf geregelt.
 
-![Duckie-Detection-Logik](media/Dueckie%20Detection%20Logic.png)
+![Duckie-Detection-Logik](img/duckie_logic.png)
 
 
 Das hat nicht so gut funktioniert: die „größte Lücke" ohne Bezug zur Bot-Breite zielte auf der
@@ -151,9 +151,9 @@ Zeile vergleichen, dadurch kürzt sich die Perspektive weg):
   Mitte angesteuert, so kann der Bot auch **zwischen zwei Enten** durchfahren, wenn er von der
   Breite her passt.
 
-![Fit-Check der Fahrbahn](media/fitcheck_demo.png)
+![Fit-Check der Fahrbahn](img/fitcheck_demo.png)
 
-![Fahrbahn-Overlay](media/Screenshot%20from%202026-07-21%2011-07-42.png)
+![Fahrbahn-Overlay](img/fahrbahn_overlay.png)
 
 - Der Bot **regelt nicht mehr dauerhaft**, sondern nur noch, **wenn tatsächlich etwas im Fahrband
   liegt** (Ente oder eine quer liegende Linie).
@@ -211,13 +211,13 @@ Zeile vergleichen, dadurch kürzt sich die Perspektive weg):
 **Mapping-Lauf:** der Bot arbeitet die Abdeckungsroute ab; das Dashboard zeigt aktuelle Kante
 (gelb), nächsten Knoten und Abbiegerichtung:
 
-![Dashboard während des Mapping-Laufs](media/Screenshot%20from%202026-07-21%2010-15-52.png)
+![Dashboard während des Mapping-Laufs](img/dashboard_mapping.png)
 
 **Torlauf:** die vorgegebene Tor-Reihenfolge wird abgefahren; oben die Reihenfolge mit
 Fortschritt, unten die gemappten Tore:
 
-![Dashboard-Ansicht Challenge 4](media/Screenshot%20from%202026-07-21%2010-20-01.png)
-![Dashboard während des Torlaufs](media/Screenshot%20from%202026-07-21%2010-21-25.png)
+![Dashboard-Ansicht Challenge 4](img/dashboard_challenge4.png)
+![Dashboard während des Torlaufs](img/dashboard_torlauf.png)
 
 ---
 
